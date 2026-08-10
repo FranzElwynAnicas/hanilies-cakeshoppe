@@ -30,7 +30,6 @@
         transform: translateY(-2px);
     }
 
-    /* Header */
     .ai-page-header {
         display: flex;
         align-items: center;
@@ -127,7 +126,6 @@
         backdrop-filter: blur(4px);
     }
 
-    /* Messages Area */
     .ai-page-messages {
         height: min(42vh, 350px);
         min-height: 220px;
@@ -149,7 +147,6 @@
         border-radius: 4px;
     }
 
-    /* Message Bubbles */
     .ai-page-message {
         width: fit-content;
         max-width: min(88%, 680px);
@@ -200,31 +197,14 @@
         border-bottom-right-radius: 0.25rem;
     }
 
-    /* Suggestions */
-    .ai-page-suggestion {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        margin: 0.2rem 0.25rem 0 0;
-        padding: 0.3rem 0.55rem;
-        border-radius: 999px;
-        background: #fdf3e8;
-        color: #3f251c;
-        text-decoration: none;
-        font-size: 0.78rem;
-        font-weight: 700;
-        border: 1px solid rgba(214, 174, 106, 0.15);
-        transition: all 0.2s ease;
+    /* ===== PRODUCT CARDS ===== */
+    .ai-product-grid {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
     }
 
-    .ai-page-suggestion:hover {
-        background: #d4af37;
-        color: #fff;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 16px rgba(212, 175, 55, 0.3);
-    }
-
-    /* Product Cards */
     .ai-product-card {
         display: block;
         width: calc(50% - 4px);
@@ -281,14 +261,6 @@
         letter-spacing: 0.5px;
     }
 
-    .ai-product-grid {
-        margin-top: 8px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-
-    /* Input Form */
     .ai-page-form {
         display: flex;
         gap: 0.5rem;
@@ -344,7 +316,6 @@
         transform: scale(0.97);
     }
 
-    /* Status Bar */
     .ai-page-status {
         display: flex;
         align-items: center;
@@ -373,13 +344,11 @@
         background: #fbbf24;
     }
 
-    /* Responsive */
     @media (max-width: 991.98px) {
         .ai-page-shell {
             padding: 60px 0 30px;
             min-height: calc(100vh - 70px);
         }
-
         .ai-page-messages {
             height: min(40vh, 320px);
             min-height: 200px;
@@ -391,60 +360,49 @@
             padding: 55px 0 20px;
             min-height: calc(100vh - 60px);
         }
-
         .ai-page-card {
             border-radius: 0;
             border-left: 0;
             border-right: 0;
             box-shadow: none;
         }
-
         .ai-page-card:hover {
             transform: none;
         }
-
         .ai-page-header {
             padding: 0.7rem 1rem;
             flex-wrap: wrap;
         }
-
         .ai-page-header-left .header-icon {
             width: 34px;
             height: 34px;
             font-size: 0.8rem;
         }
-
         .ai-page-header p {
             font-size: 0.72rem;
         }
-
         .ai-page-messages {
             height: 40vh;
             min-height: 180px;
             padding: 0.7rem;
         }
-
         .ai-page-message {
             max-width: 94%;
             font-size: 0.88rem;
             padding: 0.5rem 0.7rem;
         }
-
         .ai-page-form {
             gap: 0.4rem;
             padding: 0.5rem 0.8rem;
         }
-
         .ai-page-form input {
             font-size: 0.88rem;
             padding: 0.45rem 0.7rem;
         }
-
         .ai-page-form button {
             padding: 0 0.9rem;
             font-size: 0.8rem;
         }
-
         .ai-page-status {
             padding: 0.3rem 0.8rem;
             font-size: 0.62rem;
@@ -456,60 +414,55 @@
             padding: 50px 0 15px;
             min-height: calc(100vh - 55px);
         }
-
         .ai-page-messages {
             height: 38vh;
             min-height: 160px;
             padding: 0.5rem;
         }
-
         .ai-page-message {
             font-size: 0.82rem;
             padding: 0.45rem 0.65rem;
             max-width: 96%;
         }
-
         .ai-page-form {
             padding: 0.4rem 0.5rem;
             gap: 0.3rem;
         }
-
         .ai-page-form input {
             font-size: 0.82rem;
             padding: 0.4rem 0.6rem;
         }
-
         .ai-page-form button {
             padding: 0 0.7rem;
             font-size: 0.75rem;
         }
-
         .ai-page-form button span {
             display: none;
         }
-
         .ai-page-form button i {
             font-size: 0.85rem;
         }
-
         .ai-page-header h1 {
             font-size: 1rem;
         }
-
         .ai-page-header p {
             font-size: 0.68rem;
         }
-
         .ai-page-back-button {
             width: 1.8rem;
             height: 1.8rem;
             font-size: 0.7rem;
         }
-
         .ai-page-header-icon {
             width: 1.8rem;
             height: 1.8rem;
             font-size: 0.7rem;
+        }
+        .ai-product-card {
+            min-width: 100px;
+        }
+        .ai-product-card img {
+            height: 90px;
         }
     }
 </style>
