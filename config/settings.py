@@ -46,7 +46,7 @@ ALLOWED_HOSTS = _config_list(
 
 CSRF_TRUSTED_ORIGINS = _config_list(
     'CSRF_TRUSTED_ORIGINS',
-    ['https://hanilies-cakeshoppe-non1.onrender.com', 'https://*.onrender.com'],
+    ['https://hanilies-cakeshoppe-non1.onrender.com', 'https://*.onrender.com', 'https://hanilies-cakeshoppe-2.onrender.com'],
 )
 
 INSTALLED_APPS = [
@@ -223,4 +223,4 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
