@@ -407,11 +407,11 @@ class SmartResponseGenerator:
         return f"We have {total_cakes} cakes and {total_packages} packages available. What would you like to explore?"
     
     def _handle_package_query(self, message, context):
-        """Handle package queries - show all active packages"""
+        """Handle package queries - show all active packages with better formatting"""
         # Parse budget if mentioned
         budget = self._extract_budget(message)
         
-        # Get all active packages (don't filter by stock)
+        # Get all active packages
         packages = Package.objects.filter(
             status='active',
             is_archived=False
@@ -433,7 +433,6 @@ class SmartResponseGenerator:
         
         # If they mentioned an event type, try to filter
         if event_type:
-            # Map common terms to package_type values
             type_mapping = {
                 'wedding': 'wedding',
                 'christening': 'christening',
@@ -453,7 +452,6 @@ class SmartResponseGenerator:
         total_packages = Package.objects.filter(status='active', is_archived=False).count()
         
         if not packages_list:
-            # If no packages found with filters, show all active packages
             all_packages = Package.objects.filter(
                 status='active', is_archived=False
             ).order_by('name')[:5]
@@ -466,22 +464,22 @@ class SmartResponseGenerator:
         else:
             note = ""
         
-        # Build response with package details
+        # Build response with better formatting
         if event_type and packages_list:
-            response = f"I found these {event_type} packages for you: 🎁\n\n"
+            response = f"✨ I found these {event_type} packages for you:\n\n"
         else:
-            response = f"Here are our available packages: 🎁\n\n"
+            response = f"✨ Here are our available packages:\n\n"
         
         for pkg in packages_list:
-            response += f"• **{pkg.name}** — ₱{pkg.base_price}\n"
-            response += f"  📋 {pkg.get_package_type_display()}\n"
-            if pkg.description:
-                # Get first sentence of description
-                first_sentence = pkg.description.split('.')[0][:80]
-                if first_sentence:
-                    response += f"  📝 {first_sentence}...\n"
+            description = pkg.description or ''
+            first_sentence = description.split('.')[0][:80] if description else ''
+            
+            response += f"🎁 **{pkg.name}** — ₱{pkg.base_price}\n"
+            response += f"   📋 {pkg.get_package_type_display()}\n"
+            if first_sentence:
+                response += f"   📝 {first_sentence}...\n"
             if pkg.order_count:
-                response += f"  📦 {pkg.order_count} bookings\n"
+                response += f"   📦 {pkg.order_count} bookings\n"
             response += "\n"
         
         if note:
@@ -491,7 +489,7 @@ class SmartResponseGenerator:
         return response
     
     def _handle_cake_query(self, message, context):
-        """Handle cake queries - show all active cakes"""
+        """Handle cake queries - show all active cakes with better formatting"""
         # Parse budget if mentioned
         budget = self._extract_budget(message)
         
@@ -550,23 +548,24 @@ class SmartResponseGenerator:
         else:
             note = ""
         
-        # Build response with cake details
+        # Build response with better formatting
         if detected_flavor:
-            response = f"I found these {detected_flavor} cakes for you: 🎂\n\n"
+            response = f"✨ I found these {detected_flavor} cakes for you:\n\n"
         elif detected_theme:
-            response = f"I found these {detected_theme} cakes for you: 🎂\n\n"
+            response = f"✨ I found these {detected_theme} cakes for you:\n\n"
         else:
-            response = f"Here are our available cakes: 🎂\n\n"
+            response = f"✨ Here are our available cakes:\n\n"
         
         for cake in cakes_list:
-            response += f"• **{cake.name}** — ₱{cake.price}\n"
-            response += f"  📋 {cake.get_category_display()}\n"
-            if cake.description:
-                first_sentence = cake.description.split('.')[0][:80]
-                if first_sentence:
-                    response += f"  📝 {first_sentence}...\n"
+            description = cake.description or ''
+            first_sentence = description.split('.')[0][:80] if description else ''
+            
+            response += f"🎂 **{cake.name}** — ₱{cake.price}\n"
+            response += f"   📋 {cake.get_category_display()}\n"
+            if first_sentence:
+                response += f"   📝 {first_sentence}...\n"
             if cake.order_count:
-                response += f"  📊 {cake.order_count} orders\n"
+                response += f"   📊 {cake.order_count} orders\n"
             response += "\n"
         
         if note:
@@ -576,7 +575,7 @@ class SmartResponseGenerator:
         return response
     
     def _handle_best_seller_query(self, message, context):
-        """Handle best seller queries - show top packages or cakes"""
+        """Handle best seller queries - show top packages or cakes with better formatting"""
         # Check if asking about packages specifically
         if 'package' in message.lower() or 'event' in message.lower():
             packages = Package.objects.filter(
@@ -596,10 +595,15 @@ class SmartResponseGenerator:
             
             response = f"🏆 {note}\n\n"
             for pkg in packages:
-                response += f"• **{pkg.name}** — ₱{pkg.base_price}\n"
-                response += f"  📋 {pkg.get_package_type_display()}\n"
+                description = pkg.description or ''
+                first_sentence = description.split('.')[0][:80] if description else ''
+                
+                response += f"🎁 **{pkg.name}** — ₱{pkg.base_price}\n"
+                response += f"   📋 {pkg.get_package_type_display()}\n"
+                if first_sentence:
+                    response += f"   📝 {first_sentence}...\n"
                 if pkg.order_count:
-                    response += f"  📦 {pkg.order_count} bookings\n"
+                    response += f"   📦 {pkg.order_count} bookings\n"
                 response += "\n"
             response += "Would you like more details on any of them?"
             return response
@@ -621,10 +625,15 @@ class SmartResponseGenerator:
         
         response = f"🏆 {note}\n\n"
         for cake in cakes:
-            response += f"• **{cake.name}** — ₱{cake.price}\n"
-            response += f"  📋 {cake.get_category_display()}\n"
+            description = cake.description or ''
+            first_sentence = description.split('.')[0][:80] if description else ''
+            
+            response += f"🎂 **{cake.name}** — ₱{cake.price}\n"
+            response += f"   📋 {cake.get_category_display()}\n"
+            if first_sentence:
+                response += f"   📝 {first_sentence}...\n"
             if cake.order_count:
-                response += f"  📊 {cake.order_count} orders\n"
+                response += f"   📊 {cake.order_count} orders\n"
             response += "\n"
         response += "Would you like to see one of them?"
         return response
@@ -646,19 +655,27 @@ class SmartResponseGenerator:
             base_price__lte=budget
         ).order_by('base_price')[:2]
         
-        response = f"With a budget of ₱{budget}, here's what's available:\n\n"
+        response = f"✨ With a budget of ₱{budget}, here's what's available:\n\n"
         
         if cakes:
             response += "🍰 **Cakes:**\n"
             for cake in cakes:
-                response += f"  • {cake.name} — ₱{cake.price}\n"
+                description = cake.description or ''
+                first_sentence = description.split('.')[0][:60] if description else ''
+                response += f"   • **{cake.name}** — ₱{cake.price}\n"
+                if first_sentence:
+                    response += f"     {first_sentence}...\n"
         else:
             response += "🍰 No cakes in this budget range.\n"
         
         if packages:
             response += "\n🎁 **Packages:**\n"
             for pkg in packages:
-                response += f"  • {pkg.name} — ₱{pkg.base_price}\n"
+                description = pkg.description or ''
+                first_sentence = description.split('.')[0][:60] if description else ''
+                response += f"   • **{pkg.name}** — ₱{pkg.base_price}\n"
+                if first_sentence:
+                    response += f"     {first_sentence}...\n"
         else:
             response += "\n🎁 No packages in this budget range.\n"
         
@@ -667,7 +684,7 @@ class SmartResponseGenerator:
     
     def _handle_customization_query(self, message, context):
         """Handle customization queries"""
-        return """Yes, you can customize your cakes and packages! 🎨
+        return """✨ Yes, you can customize your cakes and packages! 🎨
 
 **For Cakes:**
 • Choose your flavor, filling, and frosting
@@ -733,11 +750,11 @@ Would you like to check availability for a specific date? 🚗"""
         response = f"🎂 **Hanilies Cakeshoppe Menu**\n\n"
         response += f"**Cakes:** {total_cakes} available\n"
         if cake_categories:
-            response += f"Categories: {', '.join(dict(Cake.CAKE_CATEGORIES).get(c, c) for c in cake_categories)}\n"
+            response += f"   Categories: {', '.join(dict(Cake.CAKE_CATEGORIES).get(c, c) for c in cake_categories)}\n"
         response += "\n"
         response += f"**Packages:** {total_packages} available\n"
         if package_types:
-            response += f"Types: {', '.join(dict(Package.PACKAGE_TYPES).get(p, p) for p in package_types)}\n"
+            response += f"   Types: {', '.join(dict(Package.PACKAGE_TYPES).get(p, p) for p in package_types)}\n"
         response += "\nWould you like to see specific categories? 🎁"
         return response
     
@@ -898,17 +915,23 @@ def get_hanilies_ai_reply(message, session_id='default'):
                 detected_flavor = flavor
                 break
         
-        # Filter by theme/occasion if mentioned
-        themes = ['birthday', 'wedding', 'christening', 'anniversary', 'custom']
-        detected_theme = None
-        for theme in themes:
-            if theme in message_lower:
-                detected_theme = theme
+        # Filter by category/theme if mentioned
+        categories = {
+            'wedding': 'wedding',
+            'birthday': 'birthday',
+            'christening': 'christening',
+            'anniversary': 'anniversary',
+            'custom': 'custom',
+        }
+        detected_category = None
+        for key, value in categories.items():
+            if key in message_lower:
+                detected_category = value
                 break
         
         # Apply filters
-        if detected_theme:
-            cakes = cakes.filter(category=detected_theme)
+        if detected_category:
+            cakes = cakes.filter(category=detected_category)
         
         if detected_flavor:
             cakes = cakes.filter(
@@ -916,7 +939,7 @@ def get_hanilies_ai_reply(message, session_id='default'):
                 Q(description__icontains=detected_flavor)
             )
         
-        # If no cakes found, show all cakes
+        # If no cakes found with filters, show all cakes
         if not cakes.exists():
             cakes = Cake.objects.filter(is_active=True, is_archived=False).order_by('name')
         
