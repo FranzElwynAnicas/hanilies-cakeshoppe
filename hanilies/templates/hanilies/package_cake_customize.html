@@ -1,0 +1,1014 @@
+{% extends 'hanilies/base.html' %}
+
+{% block title %}Customize Your Package Cake{% endblock %}
+
+{% block extra_css %}
+<style>
+    .package-cake-customize-page {
+        background:
+            radial-gradient(circle at top right, rgba(212, 175, 55, 0.14), transparent 28%),
+            linear-gradient(180deg, #fffaf7 0%, #fff6f9 48%, #ffffff 100%);
+    }
+
+    .package-customize-hero {
+        background: linear-gradient(135deg, rgba(255, 236, 240, 0.98), rgba(255, 248, 238, 0.96));
+        border: 1px solid rgba(214, 174, 106, 0.24);
+        border-radius: 32px;
+        box-shadow: 0 24px 60px rgba(133, 88, 106, 0.10);
+        overflow: hidden;
+        padding: 2.2rem;
+        position: relative;
+    }
+
+    .package-customize-hero::after {
+        background: radial-gradient(circle, rgba(214, 174, 106, 0.16) 0%, rgba(214, 174, 106, 0) 72%);
+        content: '';
+        height: 240px;
+        position: absolute;
+        right: -40px;
+        top: -60px;
+        width: 240px;
+    }
+
+    .checkout-kicker {
+        align-items: center;
+        color: #b46a7b;
+        display: inline-flex;
+        font-size: 0.76rem;
+        font-weight: 700;
+        gap: 0.55rem;
+        letter-spacing: 0.14em;
+        margin-bottom: 1rem;
+        text-transform: uppercase;
+    }
+
+    .checkout-kicker::before {
+        background: linear-gradient(90deg, #c98c62, #f1c96b);
+        border-radius: 999px;
+        content: '';
+        height: 2px;
+        width: 44px;
+    }
+
+    .checkout-lead {
+        color: #6d5964;
+        font-size: 1.02rem;
+        line-height: 1.7;
+        margin-bottom: 0;
+        max-width: 42rem;
+    }
+
+    .checkout-shell {
+        margin-top: 1.75rem;
+    }
+
+    .checkout-main-card,
+    .checkout-summary-card {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(214, 174, 106, 0.18);
+        border-radius: 30px;
+        box-shadow: 0 22px 60px rgba(117, 86, 99, 0.10);
+        overflow: hidden;
+    }
+
+    .checkout-card-header {
+        align-items: center;
+        background: linear-gradient(135deg, #d79c74, #d6ae6a 65%, #f3d699);
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+        padding: 1.3rem 1.5rem;
+    }
+
+    .checkout-card-header h5 {
+        font-size: 1.08rem;
+        margin: 0;
+    }
+
+    .checkout-header-note {
+        font-size: 0.84rem;
+        font-weight: 600;
+        opacity: 0.9;
+    }
+
+    .checkout-card-body {
+        padding: 1.5rem;
+    }
+
+    .selected-package-spotlight {
+        background: linear-gradient(135deg, rgba(255, 245, 239, 0.98), rgba(255, 250, 252, 0.98));
+        border: 1px solid rgba(214, 174, 106, 0.22);
+        border-radius: 26px;
+        display: flex;
+        gap: 1.25rem;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+        padding: 1.2rem;
+    }
+
+    .selected-package-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.7rem;
+        margin-top: 0.85rem;
+    }
+
+    .selected-package-meta span {
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(214, 174, 106, 0.22);
+        border-radius: 999px;
+        color: #7f5d4d;
+        font-size: 0.84rem;
+        font-weight: 600;
+        padding: 0.45rem 0.8rem;
+    }
+
+    .checkout-grid {
+        display: grid;
+        gap: 1.25rem;
+    }
+
+    .checkout-section {
+        background: #fff;
+        border: 1px solid rgba(214, 174, 106, 0.16);
+        border-radius: 24px;
+        padding: 1.35rem;
+    }
+
+    .checkout-section-heading {
+        align-items: flex-start;
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1.15rem;
+    }
+
+    .checkout-step-badge {
+        align-items: center;
+        background: linear-gradient(135deg, #efc17f, #d38a74);
+        border-radius: 18px;
+        color: #fff;
+        display: inline-flex;
+        font-size: 0.85rem;
+        font-weight: 700;
+        height: 42px;
+        justify-content: center;
+        min-width: 42px;
+        padding: 0 0.75rem;
+    }
+
+    .checkout-section-heading h6 {
+        font-size: 1.03rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .checkout-section-heading p {
+        color: #7a6a73;
+        margin-bottom: 0;
+    }
+
+    .attribute-selector-stack {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .attribute-selector-section {
+        background: linear-gradient(180deg, rgba(255, 249, 244, 0.92), rgba(255, 255, 255, 1));
+        border: 1px solid rgba(214, 174, 106, 0.16);
+        border-radius: 22px;
+        padding: 0.95rem;
+    }
+
+    .attribute-selector-header {
+        align-items: flex-start;
+        display: flex;
+        gap: 1rem;
+        justify-content: space-between;
+        margin-bottom: 0.9rem;
+    }
+
+    .attribute-selector-header h6 {
+        color: #d86f8b;
+        font-size: 0.94rem;
+        font-weight: 700;
+        margin-bottom: 0.2rem;
+    }
+
+    .attribute-selector-header p {
+        display: none;
+    }
+
+    .attribute-indicator {
+        align-items: center;
+        border-radius: 999px;
+        display: inline-flex;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 0.45rem 0.7rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .attribute-indicator.is-required {
+        background: rgba(244, 213, 219, 0.88);
+        color: #ab5f76;
+    }
+
+    .attribute-indicator.is-optional {
+        background: rgba(244, 233, 212, 0.9);
+        color: #8a694b;
+    }
+
+    .attribute-card-grid {
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    }
+
+    .attribute-card {
+        display: block;
+        margin: 0;
+        position: relative;
+    }
+
+    .attribute-card-input {
+        accent-color: #d86f8b;
+        height: 20px;
+        left: 14px;
+        margin: 0;
+        pointer-events: none;
+        position: absolute;
+        top: 14px;
+        width: 20px;
+        z-index: 2;
+    }
+
+    .attribute-card-body {
+        align-items: center;
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid rgba(225, 124, 155, 0.26);
+        border-radius: 20px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-height: 100%;
+        padding: 2.25rem 0.75rem 0.95rem;
+        position: relative;
+        text-align: center;
+        transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    .attribute-card:hover .attribute-card-body {
+        border-color: rgba(225, 124, 155, 0.34);
+        box-shadow: 0 14px 28px rgba(137, 94, 110, 0.08);
+        transform: translateY(-1px);
+    }
+
+    .attribute-card-media {
+        align-items: center;
+        background: linear-gradient(135deg, rgba(255, 243, 236, 0.95), rgba(255, 250, 252, 1));
+        border: 2px solid rgba(232, 176, 196, 0.36);
+        border-radius: 22px;
+        display: flex;
+        height: 76px;
+        justify-content: center;
+        margin-bottom: 0.15rem;
+        overflow: hidden;
+        position: relative;
+        width: 76px;
+    }
+
+    .attribute-card-media img {
+        border-radius: 16px;
+        display: block;
+        height: calc(100% - 10px);
+        object-fit: cover;
+        width: calc(100% - 10px);
+    }
+
+    .attribute-card-input:checked + .attribute-card-body {
+        background: linear-gradient(180deg, rgba(255, 239, 245, 0.96), rgba(255, 248, 251, 1));
+        border-color: #e17c9b;
+        box-shadow: 0 0 0 3px rgba(225, 124, 155, 0.12), 0 16px 30px rgba(137, 94, 110, 0.10);
+    }
+
+    .attribute-card-input:focus-visible + .attribute-card-body {
+        box-shadow: 0 0 0 3px rgba(211, 138, 116, 0.18);
+    }
+
+    .attribute-card-title-row {
+        align-items: center;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        justify-content: center;
+    }
+
+    .attribute-card-title {
+        color: #4e3e48;
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 700;
+        line-height: 1.25;
+    }
+
+    .attribute-card-price {
+        color: #d86f8b;
+        flex-shrink: 0;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0;
+    }
+
+    .attribute-card-note,
+    .attribute-card-meta {
+        display: none;
+    }
+
+    .checkout-section .form-control,
+    .checkout-section .form-select {
+        border-color: rgba(214, 174, 106, 0.24);
+        border-radius: 16px;
+        min-height: 52px;
+        padding-left: 0.95rem;
+        padding-right: 0.95rem;
+    }
+
+    .checkout-section textarea.form-control {
+        min-height: 120px;
+        padding-top: 0.85rem;
+    }
+
+    .checkout-section .form-control:focus,
+    .checkout-section .form-select:focus {
+        border-color: rgba(211, 138, 116, 0.72);
+        box-shadow: 0 0 0 0.22rem rgba(215, 156, 116, 0.18);
+    }
+
+    .addon-grid {
+        display: grid;
+        gap: 0.9rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .addon-option {
+        background: linear-gradient(180deg, rgba(255, 250, 246, 0.98), rgba(255, 255, 255, 1));
+        border: 1px solid rgba(214, 174, 106, 0.22);
+        border-radius: 20px;
+        margin: 0;
+        min-height: 100%;
+        padding: 1rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .addon-option:hover {
+        border-color: rgba(211, 138, 116, 0.48);
+        box-shadow: 0 16px 30px rgba(124, 89, 102, 0.08);
+        transform: translateY(-2px);
+    }
+
+    .addon-option .form-check-input {
+        margin-top: 0.2rem;
+    }
+
+    .addon-option {
+        align-items: flex-start;
+        display: flex;
+        gap: 0.85rem;
+        position: relative;
+    }
+
+    .addon-option-label {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 16px;
+        color: inherit;
+        display: grid;
+        gap: 0.7rem;
+        min-width: 0;
+        padding: 0 0 0 1.6rem;
+        transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        width: 100%;
+    }
+
+    .addon-option .form-check-input {
+        accent-color: #d86f8b;
+        left: 1rem;
+        margin: 0;
+        pointer-events: none;
+        position: absolute;
+        top: 1rem;
+    }
+
+    .addon-option .form-check-input:checked + .addon-option-label {
+        background: linear-gradient(180deg, rgba(255, 239, 245, 0.96), rgba(255, 248, 251, 1));
+        border-color: #e17c9b;
+        box-shadow: 0 0 0 3px rgba(225, 124, 155, 0.12), 0 16px 30px rgba(137, 94, 110, 0.10);
+    }
+
+    .addon-option-media {
+        background: linear-gradient(180deg, rgba(255, 247, 240, 0.98), rgba(255, 255, 255, 0.96));
+        border: 1px solid rgba(214, 174, 106, 0.20);
+        border-radius: 16px;
+        display: block;
+        overflow: hidden;
+    }
+
+    .addon-option-media img {
+        display: block;
+        height: 118px;
+        object-fit: cover;
+        width: 100%;
+    }
+
+    .addon-option-copy {
+        line-height: 1.45;
+    }
+
+    .addon-option-copy strong {
+        color: #3b2d36;
+        display: block;
+        font-size: 1rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .addon-option-copy .text-muted {
+        color: #7f6b73 !important;
+        font-weight: 600;
+    }
+
+    .summary-stack {
+        display: grid;
+        gap: 0.9rem;
+    }
+
+    .summary-block {
+        background: linear-gradient(180deg, rgba(255, 248, 243, 0.98), rgba(255, 255, 255, 1));
+        border: 1px solid rgba(214, 174, 106, 0.16);
+        border-radius: 18px;
+        padding: 0.95rem 1rem;
+    }
+
+    .summary-block-label {
+        color: #947b87;
+        display: block;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.35rem;
+        text-transform: uppercase;
+    }
+
+    .summary-block-value {
+        color: #4e3e48;
+        font-weight: 600;
+    }
+
+    .summary-cost-list {
+        margin-top: 1.25rem;
+    }
+
+    .summary-cost-row {
+        align-items: center;
+        border-bottom: 1px dashed rgba(214, 174, 106, 0.2);
+        color: #6f6470;
+        display: flex;
+        font-size: 0.94rem;
+        justify-content: space-between;
+        padding: 0.8rem 0;
+    }
+
+    .summary-cost-row:last-child {
+        border-bottom: 0;
+    }
+
+    .summary-total {
+        color: #c37d53;
+        font-size: 1.2rem;
+        font-weight: 700;
+    }
+
+    .summary-selection-panel {
+        background: linear-gradient(180deg, rgba(255, 248, 243, 0.98), rgba(255, 255, 255, 1));
+        border: 1px solid rgba(214, 174, 106, 0.16);
+        border-radius: 18px;
+        margin-top: 1rem;
+        padding: 0.95rem 1rem;
+    }
+
+    .summary-selection-empty {
+        color: #8b7280;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    .summary-selection-group + .summary-selection-group {
+        border-top: 1px dashed rgba(214, 174, 106, 0.2);
+        margin-top: 0.8rem;
+        padding-top: 0.8rem;
+    }
+
+    .summary-selection-title {
+        color: #947b87;
+        display: block;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.4rem;
+        text-transform: uppercase;
+    }
+
+    .summary-selection-list {
+        display: grid;
+        gap: 0.45rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .summary-selection-item {
+        align-items: center;
+        color: #4e3e48;
+        display: flex;
+        font-size: 0.92rem;
+        gap: 0.75rem;
+        justify-content: space-between;
+    }
+
+    .summary-selection-item-price {
+        color: #c37d53;
+        flex-shrink: 0;
+        font-weight: 700;
+    }
+
+    @media (max-width: 991px) {
+        .selected-package-spotlight {
+            flex-direction: column;
+        }
+    }
+
+    @media (max-width: 767px) {
+        .addon-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="package-cake-customize-page py-4">
+    <div class="container">
+        <div class="package-customize-hero">
+            <div class="checkout-kicker">Package Cake Builder</div>
+            <h1 class="display-5 fw-bold mb-2">Customize Your Package Cake</h1>
+            <p class="checkout-lead">Step 2 of 3: choose the same cake styling details used in the cake customization flow, then continue to payment for the selected package.</p>
+        </div>
+
+        {% if messages %}
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show mt-4" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        {% endif %}
+
+        <div class="checkout-shell row g-4">
+            <div class="col-lg-8">
+                <div class="checkout-main-card">
+                    <div class="checkout-card-header">
+                        <h5><i class="fas fa-cake me-2"></i>Cake Details</h5>
+                        <div class="checkout-header-note">Package cake styling now matches the cake builder</div>
+                    </div>
+                    <div class="checkout-card-body">
+                        <form method="post" id="package-step-two">
+                            {% csrf_token %}
+
+                            <div class="selected-package-spotlight">
+                                <div>
+                                    <div class="small text-muted text-uppercase fw-semibold mb-2">Selected package</div>
+                                    <div class="h4 mb-1">{{ package.name }}</div>
+                                    <div class="selected-package-meta">
+                                        <span>{{ package.get_package_type_display }}</span>
+                                        <span>Step 1 subtotal: P{{ draft.base_total }}</span>
+                                    </div>
+                                </div>
+                                <div class="text-lg-end">
+                                    <div class="small text-muted text-uppercase fw-semibold">Package subtotal</div>
+                                    <div class="h3 text-gold-pink mb-0">P{{ draft.base_total }}</div>
+                                </div>
+                            </div>
+
+                            <div class="checkout-grid">
+                                <section class="checkout-section">
+                                    <div class="checkout-section-heading">
+                                        <span class="checkout-step-badge">01</span>
+                                        <div>
+                                            <h6 class="fw-bold">Cake Styling Details</h6>
+                                            <p>Use the same selection pattern as the standalone cake customization page.</p>
+                                        </div>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold">Cake Theme</label>
+                                            <select class="form-select" name="theme">
+                                                <option value="">Select Theme</option>
+                                                {% for theme in theme_options %}
+                                                <option value="{{ theme }}" {% if draft.cake_theme == theme %}selected{% endif %}>{{ theme }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label fw-semibold">Color Palette</label>
+                                            <input type="text" class="form-control" name="color_palette" value="{{ draft.cake_color_palette|default:'' }}" placeholder="Example: White, blush, gold">
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="attribute-selector-stack">
+                                                {% if size_options %}
+                                                <div class="attribute-selector-section">
+                                                <div class="attribute-selector-header">
+                                                    <div>
+                                                        <h6 class="fw-bold">Choose Size Upgrade</h6>
+                                                        <p>Choose one cake size only if you want to change the package cake.</p>
+                                                    </div>
+                                                    <span class="attribute-indicator is-optional">Optional</span>
+                                                </div>
+                                                    <div class="attribute-card-grid">
+                                                        {% for option in size_options %}
+                                                        <label class="attribute-card">
+                                                            <input class="attribute-card-input package-cake-attribute-input" type="radio" name="cake_size" value="{{ option.value }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if draft.cake_size_key == option.value or draft.cake_size_label == option.label %}checked{% endif %}>
+                                                            <span class="attribute-card-body">
+                                                                {% if option.image_url %}
+                                                                <span class="attribute-card-media">
+                                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} size option">
+                                                                </span>
+                                                                {% endif %}
+                                                                <span class="attribute-card-title-row">
+                                                                    <span class="attribute-card-title">{{ option.label }}</span>
+                                                                    <span class="attribute-card-price">{% if option.price != '0.00' %}+ P{{ option.price }}{% else %}Included{% endif %}</span>
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if shape_options %}
+                                                <div class="attribute-selector-section">
+                                                <div class="attribute-selector-header">
+                                                    <div>
+                                                        <h6 class="fw-bold">Choose Shape</h6>
+                                                        <p>Select one cake shape only if you want to change the package cake.</p>
+                                                    </div>
+                                                    <span class="attribute-indicator is-optional">Optional</span>
+                                                </div>
+                                                    <div class="attribute-card-grid">
+                                                        {% for option in shape_options %}
+                                                        <label class="attribute-card">
+                                                            <input class="attribute-card-input package-cake-attribute-input" type="radio" name="shape" value="{{ option.value }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if draft.cake_shape == option.label or draft.cake_shape == option.value %}checked{% endif %}>
+                                                            <span class="attribute-card-body">
+                                                                {% if option.image_url %}
+                                                                <span class="attribute-card-media">
+                                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} shape option">
+                                                                </span>
+                                                                {% endif %}
+                                                                <span class="attribute-card-title-row">
+                                                                    <span class="attribute-card-title">{{ option.label }}</span>
+                                                                    <span class="attribute-card-price">{% if option.price != '0.00' %}+ P{{ option.price }}{% else %}Included{% endif %}</span>
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if flavor_options %}
+                                                <div class="attribute-selector-section">
+                                                <div class="attribute-selector-header">
+                                                    <div>
+                                                        <h6 class="fw-bold">Choose Flavor</h6>
+                                                        <p>Choose one flavor only if you want to change the package cake.</p>
+                                                    </div>
+                                                    <span class="attribute-indicator is-optional">Optional</span>
+                                                </div>
+                                                    <div class="attribute-card-grid">
+                                                        {% for option in flavor_options %}
+                                                        <label class="attribute-card">
+                                                            <input class="attribute-card-input package-cake-attribute-input" type="radio" name="flavor" value="{{ option.value }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if draft.cake_flavor == option.label or draft.cake_flavor == option.value %}checked{% endif %}>
+                                                            <span class="attribute-card-body">
+                                                                {% if option.image_url %}
+                                                                <span class="attribute-card-media">
+                                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} flavor option">
+                                                                </span>
+                                                                {% endif %}
+                                                                <span class="attribute-card-title-row">
+                                                                    <span class="attribute-card-title">{{ option.label }}</span>
+                                                                    <span class="attribute-card-price">{% if option.price != '0.00' %}+ P{{ option.price }}{% else %}Included{% endif %}</span>
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if frosting_options %}
+                                                <div class="attribute-selector-section">
+                                                <div class="attribute-selector-header">
+                                                    <div>
+                                                        <h6 class="fw-bold">Choose Frosting</h6>
+                                                        <p>Select one or more frosting styles, or leave all unchecked if none are needed.</p>
+                                                    </div>
+                                                    <span class="attribute-indicator is-optional">Multiple</span>
+                                                </div>
+                                                    <div class="attribute-card-grid">
+                                                        {% for option in frosting_options %}
+                                                        <label class="attribute-card">
+                                                            <input class="attribute-card-input package-cake-attribute-input" type="checkbox" name="frosting" value="{{ option.value }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if option.value in selected_package_frosting_values or option.label in selected_package_frosting_values %}checked{% endif %}>
+                                                            <span class="attribute-card-body">
+                                                                {% if option.image_url %}
+                                                                <span class="attribute-card-media">
+                                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} frosting option">
+                                                                </span>
+                                                                {% endif %}
+                                                                <span class="attribute-card-title-row">
+                                                                    <span class="attribute-card-title">{{ option.label }}</span>
+                                                                    <span class="attribute-card-price">{% if option.price != '0.00' %}+ P{{ option.price }}{% else %}Included{% endif %}</span>
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if filling_options %}
+                                                <div class="attribute-selector-section">
+                                                <div class="attribute-selector-header">
+                                                    <div>
+                                                        <h6 class="fw-bold">Choose Filling</h6>
+                                                        <p>Select one or more filling options, or leave all unchecked if none are needed.</p>
+                                                    </div>
+                                                    <span class="attribute-indicator is-optional">Multiple</span>
+                                                </div>
+                                                    <div class="attribute-card-grid">
+                                                        {% for option in filling_options %}
+                                                        <label class="attribute-card">
+                                                            <input class="attribute-card-input package-cake-attribute-input" type="checkbox" name="filling" value="{{ option.value }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if option.value in selected_package_filling_values or option.label in selected_package_filling_values %}checked{% endif %}>
+                                                            <span class="attribute-card-body">
+                                                                {% if option.image_url %}
+                                                                <span class="attribute-card-media">
+                                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} filling option">
+                                                                </span>
+                                                                {% endif %}
+                                                                <span class="attribute-card-title-row">
+                                                                    <span class="attribute-card-title">{{ option.label }}</span>
+                                                                    <span class="attribute-card-price">{% if option.price != '0.00' %}+ P{{ option.price }}{% else %}Included{% endif %}</span>
+                                                                </span>
+                                                            </span>
+                                                        </label>
+                                                        {% endfor %}
+                                                    </div>
+                                                </div>
+                                                {% endif %}
+
+                                                {% if not size_options and not shape_options and not flavor_options and not frosting_options and not filling_options %}
+                                                <div class="alert alert-light border mb-0">
+                                                    No package cake styling options are available for this package yet.
+                                                </div>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <label class="form-label fw-semibold">Message on Cake</label>
+                                            <input type="text" class="form-control" name="message_on_cake" maxlength="200" value="{{ draft.cake_message|default:'' }}" placeholder="Example: Welcome Baby Ethan">
+                                        </div>
+                                    </div>
+                                </section>
+
+                                {% if decoration_options %}
+                                <section class="checkout-section">
+                                    <div class="checkout-section-heading">
+                                        <span class="checkout-step-badge">02</span>
+                                        <div>
+                                            <h6 class="fw-bold">Optional Cake Decorations</h6>
+                                            <p>Let customers keep the same add-on selection style used in the cake flow.</p>
+                                        </div>
+                                    </div>
+                                    <div class="addon-grid">
+                                        {% for option in decoration_options %}
+                                        <label class="form-check addon-option">
+                                            <input class="form-check-input package-cake-decoration" type="checkbox" name="cake_decorations" value="{{ option.key }}" data-price="{{ option.price }}" data-label="{{ option.label }}" {% if option.key in draft.cake_decorations %}checked{% endif %}>
+                                            <span class="form-check-label addon-option-label">
+                                                {% if option.image_url %}
+                                                <span class="addon-option-media">
+                                                    <img src="{{ option.image_url }}" alt="{{ option.label }} decoration option">
+                                                </span>
+                                                {% endif %}
+                                                <span class="addon-option-copy">
+                                                    <strong>{{ option.label }}</strong>
+                                                    <span class="text-muted">+ P{{ option.price }}</span>
+                                                </span>
+                                            </span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </section>
+                                {% endif %}
+
+                                <section class="checkout-section">
+                                    <div class="checkout-section-heading">
+                                        <span class="checkout-step-badge">03</span>
+                                        <div>
+                                            <h6 class="fw-bold">Cake Instructions</h6>
+                                            <p>Capture the final design reminders before moving to payment.</p>
+                                        </div>
+                                    </div>
+                                    <label class="form-label fw-semibold">Cake Instructions</label>
+                                    <textarea class="form-control" name="cake_instructions" rows="3" placeholder="Additional cake instructions or theme reminders">{{ draft.cake_special_instructions|default:'' }}</textarea>
+                                </section>
+                            </div>
+
+                            <div class="d-flex justify-content-between mt-4">
+                                <a href="{% url 'order_package' %}?package_id={{ package.id }}" class="btn btn-outline-gold">Back to Package Details</a>
+                                <button type="submit" class="btn btn-gold">Next: Payment &amp; Event</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="checkout-summary-card sticky-top" style="top: 100px;">
+                    <div class="checkout-card-header">
+                        <h5><i class="fas fa-receipt me-2"></i>Step 2 Summary</h5>
+                        <div class="checkout-header-note">Live package cake totals</div>
+                    </div>
+                    <div class="checkout-card-body">
+                        <div class="summary-stack">
+                            <div class="summary-block">
+                                <span class="summary-block-label">Package</span>
+                                <div class="summary-block-value">{{ package.name }}</div>
+                            </div>
+                            <div class="summary-block">
+                                <span class="summary-block-label">Package Subtotal</span>
+                                <div class="summary-block-value">P{{ draft.base_total }}</div>
+                            </div>
+                        </div>
+
+                        <div class="summary-selection-panel">
+                            <span class="summary-block-label">Customization Summary</span>
+                            <p class="summary-selection-empty mb-0" id="summary-package-selection-empty">Selected package cake options will appear here.</p>
+                            <div class="summary-selection-group" data-summary-group="size" hidden>
+                                <span class="summary-selection-title">Size</span>
+                                <ul class="summary-selection-list" id="summary-list-size"></ul>
+                            </div>
+                            <div class="summary-selection-group" data-summary-group="shape" hidden>
+                                <span class="summary-selection-title">Shape</span>
+                                <ul class="summary-selection-list" id="summary-list-shape"></ul>
+                            </div>
+                            <div class="summary-selection-group" data-summary-group="flavor" hidden>
+                                <span class="summary-selection-title">Flavor</span>
+                                <ul class="summary-selection-list" id="summary-list-flavor"></ul>
+                            </div>
+                            <div class="summary-selection-group" data-summary-group="frosting" hidden>
+                                <span class="summary-selection-title">Frosting</span>
+                                <ul class="summary-selection-list" id="summary-list-frosting"></ul>
+                            </div>
+                            <div class="summary-selection-group" data-summary-group="filling" hidden>
+                                <span class="summary-selection-title">Filling</span>
+                                <ul class="summary-selection-list" id="summary-list-filling"></ul>
+                            </div>
+                            <div class="summary-selection-group" data-summary-group="addons" hidden>
+                                <span class="summary-selection-title">Add-ons</span>
+                                <ul class="summary-selection-list" id="summary-list-addons"></ul>
+                            </div>
+                        </div>
+
+                        <div class="summary-cost-list">
+                            <div class="summary-cost-row">
+                                <span>Package Subtotal</span>
+                                <span>P{{ draft.base_total }}</span>
+                            </div>
+                            <div class="summary-cost-row">
+                                <span>Customization Subtotal</span>
+                                <span id="summary-cake-custom-total">P0.00</span>
+                            </div>
+                            <div class="summary-cost-row">
+                                <span>Grand Total</span>
+                                <span class="summary-total" id="summary-running-total">P{{ draft.base_total }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const packageSubtotal = parseFloat('{{ draft.base_total }}');
+    const packageCakeAttributeInputs = Array.from(document.querySelectorAll('.package-cake-attribute-input'));
+    const packageCakeDecorations = Array.from(document.querySelectorAll('.package-cake-decoration'));
+    const packageOptionalSingleSelectNames = new Set(['cake_size', 'shape', 'flavor']);
+
+    function formatPackagePeso(amount) {
+        return `P${amount.toFixed(2)}`;
+    }
+
+    function getSelectedPackageCakeInputs(fieldName) {
+        return Array.from(document.querySelectorAll(`input[name="${fieldName}"]:checked`));
+    }
+
+    function getSelectedPackageCakeItems(fieldName) {
+        return getSelectedPackageCakeInputs(fieldName).map((input) => ({
+            label: input.dataset.label || input.value || 'Not selected',
+            price: parseFloat(input.dataset.price || '0'),
+        }));
+    }
+
+    function getSelectedPackageCakePrice(fieldName) {
+        return getSelectedPackageCakeItems(fieldName).reduce((total, item) => total + item.price, 0);
+    }
+
+    function renderPackageSummaryGroup(groupKey, items) {
+        const group = document.querySelector(`[data-summary-group="${groupKey}"]`);
+        const list = document.getElementById(`summary-list-${groupKey}`);
+        if (!group || !list) {
+            return;
+        }
+
+        if (!items.length) {
+            group.hidden = true;
+            list.innerHTML = '';
+            return;
+        }
+
+        group.hidden = false;
+        list.innerHTML = items.map((item) => `
+            <li class="summary-selection-item">
+                <span>${item.label}</span>
+                <span class="summary-selection-item-price">${formatPackagePeso(item.price)}</span>
+            </li>
+        `).join('');
+    }
+
+    function updatePackageCakeSummary() {
+        const summaryGroups = {
+            size: getSelectedPackageCakeItems('cake_size'),
+            shape: getSelectedPackageCakeItems('shape'),
+            flavor: getSelectedPackageCakeItems('flavor'),
+            frosting: getSelectedPackageCakeItems('frosting'),
+            filling: getSelectedPackageCakeItems('filling'),
+            addons: getSelectedPackageCakeItems('cake_decorations'),
+        };
+        let attributeTotal = 0;
+
+        ['cake_size', 'shape', 'flavor', 'frosting', 'filling'].forEach((fieldName) => {
+            attributeTotal += getSelectedPackageCakePrice(fieldName);
+        });
+
+        const decorationTotal = getSelectedPackageCakePrice('cake_decorations');
+        const cakeTotal = attributeTotal + decorationTotal;
+        const runningTotal = packageSubtotal + cakeTotal;
+
+        Object.entries(summaryGroups).forEach(([groupKey, items]) => {
+            renderPackageSummaryGroup(groupKey, items);
+        });
+
+        const hasSelections = Object.values(summaryGroups).some((items) => items.length);
+        document.getElementById('summary-package-selection-empty').hidden = hasSelections;
+        document.getElementById('summary-cake-custom-total').textContent = formatPackagePeso(cakeTotal);
+        document.getElementById('summary-running-total').textContent = formatPackagePeso(runningTotal);
+    }
+
+    packageCakeAttributeInputs.forEach((input) => input.addEventListener('change', updatePackageCakeSummary));
+    packageCakeAttributeInputs
+        .filter((input) => input.type === 'radio' && packageOptionalSingleSelectNames.has(input.name))
+        .forEach((input) => {
+            const card = input.closest('.attribute-card');
+            if (!card) {
+                return;
+            }
+
+            card.addEventListener('pointerdown', () => {
+                card.dataset.wasChecked = input.checked ? 'true' : 'false';
+            });
+            card.addEventListener('click', (event) => {
+                if (card.dataset.wasChecked === 'true') {
+                    event.preventDefault();
+                    input.checked = false;
+                    updatePackageCakeSummary();
+                }
+                card.dataset.wasChecked = 'false';
+            });
+        });
+    packageCakeDecorations.forEach((checkbox) => checkbox.addEventListener('change', updatePackageCakeSummary));
+    updatePackageCakeSummary();
+</script>
+{% endblock %}

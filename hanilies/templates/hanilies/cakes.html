@@ -1,0 +1,359 @@
+{% extends 'hanilies/base.html' %}
+{% load product_display %}
+
+{% block title %}Our Cakes{% endblock %}
+
+{% block extra_css %}
+<style>
+    .catalog-results-anchor {
+        scroll-margin-top: 110px;
+    }
+
+    .catalog-pagination-shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+    }
+
+    .catalog-pagination-summary {
+        color: #6c757d;
+        font-weight: 600;
+    }
+
+    .catalog-pagination-nav {
+        margin-left: auto;
+    }
+
+    .catalog-pagination-list {
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0;
+        margin: 0;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .catalog-pagination-link {
+        min-width: 42px;
+        height: 42px;
+        padding: 0 0.95rem;
+        border-radius: 999px;
+        border: 1px solid rgba(214, 174, 106, 0.3);
+        background: #fff;
+        color: #5b4b4f;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-decoration: none;
+        font-weight: 600;
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+
+    .catalog-pagination-link:hover,
+    .catalog-pagination-link:focus-visible {
+        background: #fff6ea;
+        border-color: #d6ae6a;
+        color: #8c5a17;
+    }
+
+    .catalog-pagination-link.is-current {
+        background: linear-gradient(135deg, #ff8fb1, #d6ae6a);
+        border-color: transparent;
+        color: #fff;
+        box-shadow: 0 10px 20px rgba(214, 174, 106, 0.18);
+    }
+
+    .catalog-pagination-link.is-disabled {
+        background: #f8f9fa;
+        border-color: #e9ecef;
+        color: #adb5bd;
+        cursor: not-allowed;
+    }
+    .cake-catalog-card {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+    }
+
+    .cake-catalog-media {
+        flex-shrink: 0;
+    }
+
+    .cake-catalog-image-frame {
+        align-items: center;
+        background: linear-gradient(180deg, #fffdfb 0%, #f8f5f2 100%);
+        display: flex;
+        height: 260px;
+        justify-content: center;
+        min-height: 260px;
+        overflow: hidden;
+        padding: 0.75rem;
+        width: 100%;
+    }
+
+    .cake-catalog-image {
+        background: transparent;
+        display: block;
+        height: 100% !important;
+        max-height: none !important;
+        min-height: 0 !important;
+        object-fit: contain !important;
+        object-position: center !important;
+        width: 100% !important;
+    }
+
+    .cake-catalog-empty {
+        background: linear-gradient(180deg, #fffdfb 0%, #f8f5f2 100%);
+        min-height: 322px;
+    }
+
+    .cake-catalog-card .product-card-body {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+    }
+
+    .cake-catalog-card .product-card-footer {
+        margin-top: auto;
+    }
+
+    .booking-check-card {
+        background: linear-gradient(135deg, #fff8fb, #fffdf7);
+        border: 1px solid rgba(214, 174, 106, 0.22);
+        border-radius: 22px;
+        box-shadow: 0 18px 40px rgba(133, 88, 106, 0.08);
+    }
+
+    .booking-check-result {
+        min-height: 1.45rem;
+        font-weight: 700;
+    }
+
+    @media (max-width: 767.98px) {
+        .cake-catalog-image-frame {
+            height: 230px;
+            min-height: 230px;
+            padding: 0.65rem;
+        }
+
+        .cake-catalog-empty {
+            min-height: 290px;
+        }
+    }
+
+    @media (max-width: 767.98px) {
+        .catalog-pagination-shell {
+            align-items: stretch;
+        }
+
+        .catalog-pagination-nav {
+            width: 100%;
+            margin-left: 0;
+        }
+
+        .catalog-pagination-list {
+            justify-content: flex-start;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <h1 class="display-5 fw-bold mb-2">Our Cake Collection</h1>
+            <p class="lead text-muted mb-0">Browse the live catalog and place a customized order directly from the system.</p>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <form method="get" action="{% url 'cakes' %}#cakes-collection" class="row g-3 align-items-end" id="cakeCatalogFilterForm">
+                        <div class="col-md-4">
+                            <label for="category" class="form-label fw-semibold">Category</label>
+                            <select class="form-select" id="category" name="category" data-auto-submit-filter>
+                                <option value="">All Categories</option>
+                                {% for value, label in categories %}
+                                <option value="{{ value }}" {% if selected_category == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label for="q" class="form-label fw-semibold">Search</label>
+                            <input type="text" class="form-control" id="q" name="q" value="{{ search_term }}" placeholder="Search cake name or description">
+                        </div>
+                        <div class="col-md-3 d-grid">
+                            <button type="submit" class="btn btn-gold">Filter Cakes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="booking-check-card p-4 mb-4">
+        <div class="row g-3 align-items-end">
+            <div class="col-lg-6">
+                <h2 class="h5 fw-bold mb-1"><i class="fas fa-calendar-days me-2 text-gold"></i>Check Available Cake Dates</h2>
+                <p class="text-muted mb-0">New customers may check open dates before logging in. A date is reserved only after order submission and payment verification.</p>
+            </div>
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label fw-semibold" for="cake_catalog_booking_date">Pickup / Delivery Date</label>
+                <input type="date" class="form-control" id="cake_catalog_booking_date" min="{{ cake_order_window.min }}" max="{{ cake_order_window.max }}" data-availability-url="{{ booking_availability_url }}" data-order-type="cake">
+            </div>
+            <div class="col-md-4 col-lg-2 d-grid">
+                <button type="button" class="btn btn-gold" id="cakeCatalogCheckDate">Check Date</button>
+            </div>
+            <div class="col-12">
+                <div class="booking-check-result text-muted" id="cakeCatalogBookingResult" aria-live="polite">Choose a date from {{ cake_order_window.min }} to {{ cake_order_window.max }}.</div>
+            </div>
+        </div>
+    </div>
+
+    <section id="cakes-collection" class="catalog-results-anchor" aria-label="Cake catalog results">
+        <div class="row g-4">
+            {% for cake in cakes %}
+            <div class="col-md-6 col-xl-4">
+                <div class="card product-card cake-catalog-card h-100 border-0 shadow-sm overflow-hidden">
+                    {% if cake.image %}
+                    <div class="product-card-media package-gallery cake-catalog-media">
+                        <div class="package-gallery-panel">
+                            <div class="image-zoom-frame package-gallery-stage cake-catalog-image-frame mb-0">
+                                <img src="{{ cake.image.url }}" class="card-img-top package-gallery-main cake-catalog-image" alt="{{ cake.name }}">
+                                <button type="button" class="image-zoom-trigger package-gallery-zoom" data-zoom-src="{{ cake.image.url }}" data-zoom-title="{{ cake.name }}" data-zoom-gallery="cakes-catalog">
+                                    <i class="fas fa-search-plus"></i> Zoom
+                                </button>
+                            </div>
+                        </div>
+                        <div class="package-gallery-meta">
+                            <span class="package-gallery-count">1 image available in zoom</span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="package-gallery-empty cake-catalog-empty d-flex align-items-center justify-content-center">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-birthday-cake fa-3x mb-3"></i>
+                            <div>No cake image uploaded</div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="card-body product-card-body d-flex flex-column">
+                        <div class="product-card-heading">
+                            <div>
+                                <h4 class="product-card-title">{{ cake.name }}</h4>
+                                <div class="product-card-meta">{{ cake.get_category_display }}</div>
+                            </div>
+                            <div class="product-card-price">P{{ cake.price }}</div>
+                        </div>
+                        {% with details=cake.description|product_details %}
+                        {% if details %}
+                        <div class="product-detail-list mb-3">
+                            {% for detail in details %}
+                            <div class="product-detail-row"><span class="product-detail-label">{{ detail.label }}:</span> {{ detail.value }}</div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="product-card-description">{{ cake.description|default:'Customized celebration cake available for made-to-order requests.' }}</p>
+                        {% endif %}
+                        {% endwith %}
+                        <div class="product-stock-row"><i class="fas fa-box me-2"></i>Available stock: {{ cake.stock }}</div>
+                        <div class="product-card-footer">
+                            <a href="{% url 'cake_customize' %}?cake_id={{ cake.id }}" class="btn btn-gold w-100">Customize & Order</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="col-12">
+                <div class="alert alert-warning mb-0">No cakes matched your filters. Try a different category or search term.</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="catalog-pagination-shell">
+            <div class="catalog-pagination-summary">{{ cakes_pagination.summary }}</div>
+            {% if cakes_pagination.result_count %}
+            <nav class="catalog-pagination-nav" aria-label="Cake catalog pagination">
+                <ul class="catalog-pagination-list">
+                    <li>
+                        {% if cakes_pagination.prev_url %}
+                        <a href="{{ cakes_pagination.prev_url }}" class="catalog-pagination-link" aria-label="Go to previous page">Previous</a>
+                        {% else %}
+                        <span class="catalog-pagination-link is-disabled" aria-disabled="true">Previous</span>
+                        {% endif %}
+                    </li>
+                    {% for page_link in cakes_pagination.page_links %}
+                    <li>
+                        {% if page_link.is_current %}
+                        <span class="catalog-pagination-link is-current" aria-current="page">{{ page_link.number }}</span>
+                        {% else %}
+                        <a href="{{ page_link.url }}" class="catalog-pagination-link" aria-label="{{ page_link.aria_label }}">{{ page_link.number }}</a>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                    <li>
+                        {% if cakes_pagination.next_url %}
+                        <a href="{{ cakes_pagination.next_url }}" class="catalog-pagination-link" aria-label="Go to next page">Next</a>
+                        {% else %}
+                        <span class="catalog-pagination-link is-disabled" aria-disabled="true">Next</span>
+                        {% endif %}
+                    </li>
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const cakeCatalogDateInput = document.getElementById('cake_catalog_booking_date');
+    const cakeCatalogCheckButton = document.getElementById('cakeCatalogCheckDate');
+    const cakeCatalogBookingResult = document.getElementById('cakeCatalogBookingResult');
+
+    async function checkCakeCatalogDate() {
+        const selectedDate = cakeCatalogDateInput.value;
+        cakeCatalogBookingResult.className = 'booking-check-result text-muted';
+        if (!selectedDate) {
+            cakeCatalogBookingResult.textContent = 'Please select a date first.';
+            return;
+        }
+
+        const params = new URLSearchParams({
+            date: selectedDate,
+            order_type: cakeCatalogDateInput.dataset.orderType,
+        });
+        try {
+            const response = await fetch(`${cakeCatalogDateInput.dataset.availabilityUrl}?${params.toString()}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const payload = await response.json();
+            cakeCatalogBookingResult.textContent = payload.message;
+            cakeCatalogBookingResult.className = `booking-check-result ${payload.available ? 'text-success' : 'text-danger'}`;
+        } catch (error) {
+            cakeCatalogBookingResult.textContent = 'Unable to check availability right now. Please try again.';
+            cakeCatalogBookingResult.className = 'booking-check-result text-danger';
+        }
+    }
+
+    cakeCatalogCheckButton.addEventListener('click', checkCakeCatalogDate);
+    cakeCatalogDateInput.addEventListener('change', checkCakeCatalogDate);
+
+    const cakeCatalogFilterForm = document.getElementById('cakeCatalogFilterForm');
+    const cakeCatalogCategorySelect = document.querySelector('#cakeCatalogFilterForm [data-auto-submit-filter]');
+    if (cakeCatalogFilterForm && cakeCatalogCategorySelect) {
+        cakeCatalogCategorySelect.addEventListener('change', () => {
+            cakeCatalogFilterForm.requestSubmit();
+        });
+    }
+</script>
+{% endblock %}

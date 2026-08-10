@@ -1,0 +1,260 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Booking Calendar{% endblock %}
+{% block page_title %}Booking Calendar{% endblock %}
+{% block page_icon %}calendar-days{% endblock %}
+
+{% block extra_css %}
+<style>
+    .booking-toolbar {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: space-between;
+    }
+
+    .booking-month-nav {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .booking-month-title {
+        color: #111827;
+        font-size: 1.15rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .booking-rule-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin-top: 16px;
+    }
+
+    .booking-rule-card {
+        background: #fff7fb;
+        border: 1px solid #fce7f3;
+        border-radius: 14px;
+        padding: 14px;
+    }
+
+    .booking-rule-card span {
+        color: #6b7280;
+        display: block;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .booking-rule-card strong {
+        color: #111827;
+        display: block;
+        font-size: 1.05rem;
+        margin-top: 4px;
+    }
+
+    .booking-calendar-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+
+    .booking-day-card {
+        border: 1px solid #f3d7e6;
+        border-radius: 16px;
+        background: #ffffff;
+        padding: 14px;
+    }
+
+    .booking-day-card.is-full {
+        border-color: #fecaca;
+        background: #fff7f7;
+    }
+
+    .booking-day-card.is-blocked {
+        border-color: #f59e0b;
+        background: #fffbeb;
+    }
+
+    .booking-day-head {
+        align-items: flex-start;
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+    }
+
+    .booking-day-date {
+        color: #111827;
+        font-weight: 800;
+    }
+
+    .booking-day-count {
+        color: #4b5563;
+        font-size: 0.85rem;
+        font-weight: 700;
+    }
+
+    .booking-order-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .booking-order-item {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 10px;
+    }
+
+    .booking-order-item a {
+        color: #1d4ed8;
+        font-weight: 800;
+        text-decoration: none;
+    }
+
+    .booking-order-item a:hover {
+        text-decoration: underline;
+    }
+
+    .booking-order-meta {
+        color: #6b7280;
+        font-size: 0.83rem;
+        font-weight: 600;
+        margin-top: 2px;
+    }
+
+    .booking-block-form {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .booking-inline-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .booking-upcoming-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="module-card">
+    <div class="module-header booking-toolbar">
+        <div>
+            <h2 class="booking-month-title"><i class="fas fa-calendar-days"></i> {{ month_start|date:"F Y" }}</h2>
+            <p class="text-muted mb-0">Review daily capacity, pending/confirmed orders, and blocked shop dates.</p>
+        </div>
+        <div class="booking-month-nav">
+            <a href="{% url 'admin_booking_calendar' %}?month={{ previous_month|date:'Y-m' }}" class="btn-preview"><i class="fas fa-chevron-left"></i> Previous</a>
+            <a href="{% url 'admin_booking_calendar' %}" class="btn-preview"><i class="fas fa-calendar-day"></i> Current Month</a>
+            <a href="{% url 'admin_booking_calendar' %}?month={{ next_month|date:'Y-m' }}" class="btn-preview">Next <i class="fas fa-chevron-right"></i></a>
+        </div>
+    </div>
+    <div class="booking-rule-grid">
+        <div class="booking-rule-card"><span>Cake Daily Capacity</span><strong>{{ cake_daily_order_limit }} cake orders</strong></div>
+        <div class="booking-rule-card"><span>Package Daily Capacity</span><strong>{{ package_daily_event_limit }} package events</strong></div>
+        <div class="booking-rule-card"><span>Customer Rule</span><strong>Guests may check dates only</strong></div>
+        <div class="booking-rule-card"><span>Reservation Rule</span><strong>Confirmed after payment approval</strong></div>
+    </div>
+</div>
+
+<div class="module-card">
+    <div class="module-header">
+        <h2><i class="fas fa-list-check"></i> Upcoming Active Bookings</h2>
+    </div>
+    <div class="booking-upcoming-grid">
+        <div>
+            <h3 class="h6 fw-bold">Cake Orders</h3>
+            <div class="booking-order-list">
+                {% for order in upcoming_cake_orders %}
+                <div class="booking-order-item">
+                    <a href="{% url 'admin_cake_order_view' order.id %}?next={{ request.get_full_path|urlencode }}">Cake Order #{{ order.id }}</a>
+                    <div class="booking-order-meta">{{ order.delivery_date|date:"M j, Y" }} · {{ order.user.get_full_name|default:order.user.username }} · {{ order.get_order_status_display }}</div>
+                </div>
+                {% empty %}
+                <div class="booking-order-meta">No upcoming cake bookings.</div>
+                {% endfor %}
+            </div>
+        </div>
+        <div>
+            <h3 class="h6 fw-bold">Package Orders</h3>
+            <div class="booking-order-list">
+                {% for order in upcoming_package_orders %}
+                <div class="booking-order-item">
+                    <a href="{% url 'admin_package_order_view' order.id %}?next={{ request.get_full_path|urlencode }}">Package Order #{{ order.id }}</a>
+                    <div class="booking-order-meta">{{ order.event_date|date:"M j, Y" }} · {{ order.user.get_full_name|default:order.user.username }} · {{ order.get_order_status_display }}</div>
+                </div>
+                {% empty %}
+                <div class="booking-order-meta">No upcoming package bookings.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="booking-calendar-grid">
+    {% for day in day_rows %}
+    <div class="booking-day-card{% if day.availability.blocked %} is-blocked{% elif not day.availability.available %} is-full{% endif %}">
+        <div class="booking-day-head">
+            <div>
+                <div class="booking-day-date">{{ day.date|date:"D, M j" }}</div>
+                <div class="booking-day-count">{{ day.availability.cake_count }} / {{ day.availability.cake_capacity }} cakes · {{ day.availability.package_count }} / {{ day.availability.package_capacity }} packages</div>
+            </div>
+            {% if day.availability.blocked %}
+            <span class="status-badge status-pending">Blocked</span>
+            {% elif day.availability.available %}
+            <span class="status-badge status-paid">Available</span>
+            {% else %}
+            <span class="status-badge status-rejected">Full</span>
+            {% endif %}
+        </div>
+
+        {% if day.block %}
+        <div class="booking-order-meta mt-2"><strong>Reason:</strong> {{ day.block.reason|default:"Unavailable for shop scheduling." }}</div>
+        {% endif %}
+
+        <div class="booking-order-list">
+            {% for order in day.cake_orders %}
+            <div class="booking-order-item">
+                <a href="{% url 'admin_cake_order_view' order.id %}?next={{ request.get_full_path|urlencode }}">Cake Order #{{ order.id }}</a>
+                <div class="booking-order-meta">{{ order.cake.name|default:"Custom Cake" }} · {{ order.user.get_full_name|default:order.user.username }} · {{ order.get_order_status_display }}</div>
+            </div>
+            {% endfor %}
+            {% for order in day.package_orders %}
+            <div class="booking-order-item">
+                <a href="{% url 'admin_package_order_view' order.id %}?next={{ request.get_full_path|urlencode }}">Package Order #{{ order.id }}</a>
+                <div class="booking-order-meta">{{ order.package.name|default:"Custom Package" }} · {{ order.user.get_full_name|default:order.user.username }} · {{ order.get_order_status_display }}</div>
+            </div>
+            {% endfor %}
+            {% if not day.cake_orders and not day.package_orders %}
+            <div class="booking-order-meta">No active orders scheduled.</div>
+            {% endif %}
+        </div>
+
+        <form method="post" class="booking-block-form">
+            {% csrf_token %}
+            <input type="hidden" name="date" value="{{ day.date|date:'Y-m-d' }}">
+            {% if day.block %}
+            <input type="hidden" name="action" value="unblock">
+            <button type="submit" class="btn-preview" onclick="return confirm('Reopen {{ day.date|date:"M j, Y" }} for bookings?');"><i class="fas fa-unlock"></i> Reopen Date</button>
+            {% else %}
+            <input type="hidden" name="action" value="block">
+            <input type="text" name="reason" class="form-control" maxlength="200" placeholder="Reason, e.g. holiday or fully booked production day">
+            <button type="submit" class="btn-preview"><i class="fas fa-ban"></i> Block Date</button>
+            {% endif %}
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

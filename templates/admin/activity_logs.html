@@ -1,0 +1,1931 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Audit Trail
+{% endblock %}
+{% block page_title %}Audit Trail
+{% endblock %}
+{% block page_icon %}clipboard-list
+{% endblock %}
+
+{% block content %}
+<style>
+.audit-ui-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+}
+
+.audit-ui-page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-title-block h2 {
+    margin: 0 0 6px;
+    font-size: 1.6rem;
+    color: #111827;
+}
+
+.audit-ui-title-block p {
+    margin: 0;
+    color: #6b7280;
+    max-width: 720px;
+}
+
+.audit-ui-top-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-toolbar-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 10px 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.92rem;
+    cursor: pointer;
+}
+
+.audit-ui-toolbar-btn-primary {
+    background: linear-gradient(135deg, #fb7185, #f97316);
+    color: #fff;
+    box-shadow: 0 12px 24px rgba(251, 113, 133, 0.18);
+}
+
+.audit-ui-toolbar-btn-soft {
+    background: #fff7fa;
+    color: #be185d;
+    border: 1px solid #fbcfe8;
+}
+
+.audit-ui-toolbar-btn-outline {
+    background: #fff;
+    color: #374151;
+    border: 1px solid #dbe1ea;
+}
+
+.audit-ui-tabs {
+    display: inline-flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-tab {
+    padding: 10px 18px;
+    border-radius: 999px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: #6b7280;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+}
+
+.audit-ui-tab.is-active {
+    background: linear-gradient(135deg, #fff1f5, #fff7ed);
+    border-color: #f9a8d4;
+    color: #be185d;
+}
+
+.audit-ui-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+    gap: 16px;
+}
+
+.audit-ui-summary-card {
+    background: linear-gradient(180deg, #ffffff, #fff9fb);
+    border: 1px solid #f3d6e3;
+    border-radius: 18px;
+    padding: 18px 18px 16px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.audit-ui-summary-label {
+    display: block;
+    margin-bottom: 8px;
+    color: #6b7280;
+    font-size: 0.84rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.audit-ui-summary-value {
+    display: block;
+    font-size: 1.8rem;
+    line-height: 1;
+    font-weight: 800;
+    color: #111827;
+}
+
+.audit-ui-summary-copy {
+    margin-top: 8px;
+    color: #6b7280;
+    font-size: 0.88rem;
+}
+
+.audit-ui-filter-card {
+    background: #fff;
+    border: 1px solid #f0d7e3;
+    border-radius: 20px;
+    padding: 22px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.audit-ui-filter-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+}
+
+.audit-ui-filter-card-title {
+    margin: 0 0 6px;
+    font-size: 1.05rem;
+    color: #111827;
+}
+
+.audit-ui-filter-card-copy {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.92rem;
+}
+
+.audit-ui-filter-card-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-search-field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 0 14px;
+    min-height: 52px;
+}
+
+.audit-ui-search-field i {
+    color: #9ca3af;
+}
+
+.audit-ui-search-field input {
+    border: none;
+    outline: none;
+    background: transparent;
+    width: 100%;
+    padding: 14px 0;
+}
+
+.audit-ui-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.audit-ui-inline-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.audit-ui-inline-filter span {
+    color: #6b7280;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.audit-ui-inline-filter input,
+.audit-ui-inline-filter select {
+    width: 100%;
+    min-height: 46px;
+    border-radius: 12px;
+    border: 1px solid #dbe1ea;
+    background: #fff;
+    padding: 10px 12px;
+    color: #111827;
+}
+
+.audit-ui-advanced-filters {
+    margin-top: 18px;
+    border: 1px solid #f1d7e5;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #fff8fb, #ffffff);
+    overflow: hidden;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.audit-ui-advanced-filters:hover {
+    border-color: #f3b6ce;
+    box-shadow: 0 14px 28px rgba(244, 114, 182, 0.12);
+}
+
+.audit-ui-advanced-filters summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px;
+    color: #111827;
+    transition: background-color 0.2s ease;
+}
+
+.audit-ui-advanced-filters summary:hover {
+    background: rgba(255, 241, 245, 0.72);
+}
+
+.audit-ui-advanced-filters summary:focus-visible {
+    outline: 3px solid rgba(236, 72, 153, 0.22);
+    outline-offset: -3px;
+    background: rgba(255, 241, 245, 0.72);
+}
+
+.audit-ui-advanced-filters summary::-webkit-details-marker {
+    display: none;
+}
+
+.audit-ui-advanced-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+    flex-wrap: wrap;
+}
+
+.audit-ui-advanced-summary strong {
+    display: block;
+    font-size: 0.98rem;
+    font-weight: 800;
+}
+
+.audit-ui-advanced-summary-copy {
+    display: block;
+    margin-top: 4px;
+    color: #6b7280;
+    font-size: 0.86rem;
+    font-weight: 500;
+}
+
+.audit-ui-advanced-interaction {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    color: #9d174d;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.audit-ui-advanced-interaction i {
+    color: #ec4899;
+}
+
+.audit-ui-advanced-trigger-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.audit-ui-advanced-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #fbcfe8;
+    color: #be185d;
+    font-size: 0.78rem;
+    font-weight: 800;
+    white-space: nowrap;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.audit-ui-advanced-total {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 110px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: #fff1f5;
+    border: 1px solid #fbcfe8;
+    color: #be185d;
+    font-size: 0.82rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.audit-ui-advanced-chevron {
+    color: #be185d;
+    transition: transform 0.2s ease;
+}
+
+.audit-ui-advanced-filters[open] {
+    border-color: #f3b6ce;
+    box-shadow: 0 16px 30px rgba(244, 114, 182, 0.16);
+}
+
+.audit-ui-advanced-filters[open] .audit-ui-advanced-chevron {
+    transform: rotate(180deg);
+}
+
+.audit-ui-advanced-panel {
+    border-top: 1px solid #f3dce6;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.audit-ui-advanced-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-action-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    flex: 1 1 280px;
+    padding: 0 12px;
+    border-radius: 14px;
+    border: 1px solid #e7d5df;
+    background: #fff;
+}
+
+.audit-ui-action-search i {
+    color: #9ca3af;
+}
+
+.audit-ui-action-search input {
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    padding: 11px 0;
+    color: #111827;
+}
+
+.audit-ui-action-search:focus-within {
+    border-color: #f472b6;
+    box-shadow: 0 0 0 4px rgba(244, 114, 182, 0.12);
+}
+
+.audit-ui-advanced-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-toolbar-btn-compact {
+    padding: 9px 14px;
+    font-size: 0.84rem;
+}
+
+.audit-ui-advanced-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-advanced-meta .audit-ui-filter-note {
+    margin: 0;
+}
+
+.audit-action-accordion {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.audit-action-group.is-search-hidden {
+    display: none;
+}
+
+.audit-action-group-card {
+    border: 1px solid #f2dde7;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+
+.audit-action-group-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    flex-wrap: wrap;
+}
+
+.audit-action-group-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1 1 240px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+.audit-action-group-toggle:hover {
+    opacity: 0.92;
+}
+
+.audit-action-group-toggle:focus-visible {
+    outline: 3px solid rgba(236, 72, 153, 0.22);
+    outline-offset: 4px;
+    border-radius: 12px;
+}
+
+.audit-action-group-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #fff1f5, #fff7ed);
+    color: #db2777;
+    flex-shrink: 0;
+}
+
+.audit-action-group-copy {
+    min-width: 0;
+}
+
+.audit-action-group-copy strong {
+    display: block;
+    color: #111827;
+    font-size: 0.94rem;
+    font-weight: 800;
+}
+
+.audit-action-group-copy span {
+    display: block;
+    margin-top: 3px;
+    color: #6b7280;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.audit-action-group-tools {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.audit-action-group-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 84px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: #fff1f5;
+    color: #be185d;
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.audit-action-select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 999px;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    color: #374151;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.audit-action-select-all input {
+    margin: 0;
+}
+
+.audit-action-clear-btn {
+    border: none;
+    background: transparent;
+    color: #be185d;
+    font-size: 0.8rem;
+    font-weight: 800;
+    padding: 6px 0;
+}
+
+.audit-action-clear-btn[disabled] {
+    color: #cbd5e1;
+}
+
+.audit-action-group-body {
+    padding: 0 16px 16px;
+}
+
+.audit-action-item-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+}
+
+.audit-action-item {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-height: 52px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid #e7eaf0;
+    background: #fcfcfd;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.audit-action-item:hover {
+    transform: translateY(-1px);
+    border-color: #f3c5d7;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.audit-action-item.is-checked {
+    border-color: #f9a8d4;
+    background: linear-gradient(135deg, #fff1f5, #fffdf8);
+    box-shadow: inset 0 0 0 1px rgba(249, 168, 212, 0.4);
+}
+
+.audit-action-item input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.audit-action-item-indicator {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    border-radius: 999px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.62rem;
+    flex-shrink: 0;
+}
+
+.audit-action-item.is-checked .audit-action-item-indicator {
+    border-color: #ec4899;
+    background: #ec4899;
+    color: #fff;
+}
+
+.audit-action-item-copy {
+    min-width: 0;
+}
+
+.audit-action-item-copy strong {
+    display: block;
+    color: #111827;
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.audit-action-empty-search,
+.audit-action-category-empty {
+    padding: 14px;
+    border-radius: 14px;
+    background: #fff8fb;
+    border: 1px dashed #f3c5d7;
+    color: #6b7280;
+    font-size: 0.84rem;
+    text-align: center;
+}
+
+.audit-ui-filter-footer {
+    margin-top: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-filter-note {
+    color: #6b7280;
+    font-size: 0.88rem;
+}
+
+.audit-ui-reset-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #be185d;
+    text-decoration: none;
+    font-weight: 700;
+}
+
+.audit-ui-chipbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.audit-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #fff1f5;
+    color: #be185d;
+    border: 1px solid #fbcfe8;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.audit-ui-section-card {
+    background: #fff;
+    border: 1px solid #eef0f4;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.audit-ui-section-head {
+    padding: 20px 22px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #f2f4f7;
+}
+
+.audit-ui-section-head h3 {
+    margin: 0 0 6px;
+    color: #111827;
+}
+
+.audit-ui-section-head p {
+    margin: 0;
+    color: #6b7280;
+}
+
+.audit-ui-section-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-range-pill,
+.audit-ui-view-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.audit-ui-range-pill {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.audit-ui-view-pill {
+    background: #fdf2f8;
+    color: #be185d;
+}
+
+.audit-pagination-row {
+    padding: 16px 22px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.audit-pagination-row.is-top {
+    padding-top: 0;
+    border-bottom: 1px solid #f2f4f7;
+}
+
+.audit-pagination-row.is-bottom {
+    border-top: 1px solid #f2f4f7;
+}
+
+.audit-ui-page-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.audit-ui-page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 98px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    text-decoration: none;
+    font-weight: 700;
+    background: #fff;
+    color: #374151;
+    border: 1px solid #dbe1ea;
+}
+
+.audit-ui-page-btn-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.audit-ui-page-indicator {
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.audit-ui-table-wrap {
+    overflow: auto;
+    max-width: 100%;
+}
+
+.audit-ui-table {
+    width: 100%;
+    min-width: 1040px;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.audit-ui-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #fffafc;
+    color: #111827;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #ecd9e3;
+}
+
+.audit-ui-table th,
+.audit-ui-table td {
+    padding: 13px 14px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid #eef0f4;
+}
+
+.audit-ui-table td {
+    font-size: 0.9rem;
+}
+
+.audit-ui-table tbody tr:hover {
+    background: #fff8fb;
+}
+
+.audit-role-badge,
+.audit-action-badge,
+.audit-ui-row-state {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.audit-role-badge-admin,
+.audit-role-badge-owner,
+.audit-role-badge-manager,
+.audit-role-badge-supervisor {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.audit-role-badge-baker,
+.audit-role-badge-packager,
+.audit-role-badge-cashier {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.audit-role-badge-customer,
+.audit-role-badge-default {
+    background: #f3e8ff;
+    color: #7c3aed;
+}
+
+.audit-action-badge-login,
+.audit-action-badge-restore {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.audit-action-badge-update {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.audit-action-badge-delete {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.audit-action-badge-archive {
+    background: #ffe4e6;
+    color: #9f1239;
+}
+
+.audit-action-badge-create {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.audit-action-badge-restore {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.audit-action-badge-login {
+    background: #ccfbf1;
+    color: #0f766e;
+}
+
+.audit-action-badge-logout {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.audit-action-badge-default {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.audit-ui-row-state-active {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.audit-ui-row-state-archived {
+    background: #fce7f3;
+    color: #be185d;
+}
+
+.audit-ui-user-cell strong,
+.audit-ui-module-cell strong,
+.audit-ui-record-cell strong {
+    display: block;
+    color: #111827;
+}
+
+.audit-ui-user-cell span,
+.audit-ui-module-cell span,
+.audit-ui-record-cell span {
+    display: block;
+    margin-top: 3px;
+    color: #6b7280;
+    font-size: 0.8rem;
+}
+
+.audit-ui-description-cell {
+    min-width: 230px;
+}
+
+.audit-ui-description-toggle {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: #374151;
+    cursor: pointer;
+    list-style: none;
+    font-weight: 600;
+    line-height: 1.45;
+    font-size: 0.88rem;
+}
+
+.audit-ui-description-toggle::-webkit-details-marker {
+    display: none;
+}
+
+.audit-ui-description-toggle::after {
+    content: ' View details';
+    color: #be185d;
+    font-weight: 700;
+}
+
+.audit-ui-description-details[open] .audit-ui-description-toggle::after {
+    content: ' Hide details';
+}
+
+.audit-ui-description-full {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #fff7fa;
+    border: 1px solid #f6d5e4;
+    color: #4b5563;
+    white-space: normal;
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+
+.audit-ui-row-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.audit-ui-inline-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 7px 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.audit-ui-inline-btn-archive {
+    background: #fff1f2;
+    color: #be123c;
+}
+
+.audit-ui-inline-btn-restore {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.audit-empty-state {
+    padding: 46px 22px;
+    text-align: center;
+    color: #6b7280;
+}
+
+.audit-empty-state i {
+    font-size: 2.4rem;
+    margin-bottom: 12px;
+    color: #f472b6;
+}
+
+.audit-ui-export-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 16px;
+    padding: 22px;
+}
+
+.audit-ui-export-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-decoration: none;
+    color: #111827;
+    background: linear-gradient(180deg, #ffffff, #fff8fb);
+    border: 1px solid #f0d7e3;
+    border-radius: 18px;
+    padding: 20px;
+    min-height: 150px;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
+}
+
+.audit-ui-export-card i {
+    font-size: 1.5rem;
+    color: #ec4899;
+}
+
+.audit-ui-export-card strong {
+    font-size: 1rem;
+}
+
+.audit-ui-export-card span {
+    color: #6b7280;
+    line-height: 1.5;
+}
+
+.audit-export-note {
+    margin: 0 22px 22px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: #fff7fa;
+    border: 1px solid #f8d4e3;
+    color: #6b7280;
+}
+
+@media (max-width: 991px) {
+    .audit-ui-filter-card,
+    .audit-ui-section-head,
+    .audit-pagination-row {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .audit-ui-export-grid {
+        padding: 16px;
+    }
+
+    .audit-export-note {
+        margin: 0 16px 16px;
+    }
+
+    .audit-ui-advanced-panel {
+        padding: 16px;
+    }
+
+    .audit-action-group-head {
+        padding: 14px;
+    }
+
+    .audit-action-item-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .audit-ui-filter-card {
+        padding: 18px 16px;
+    }
+
+    .audit-ui-advanced-filters summary,
+    .audit-ui-advanced-panel,
+    .audit-action-group-head,
+    .audit-action-group-body {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+
+    .audit-ui-advanced-summary {
+        align-items: flex-start;
+    }
+
+    .audit-ui-advanced-trigger,
+    .audit-ui-advanced-total,
+    .audit-action-group-count,
+    .audit-action-select-all {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .audit-ui-advanced-toolbar,
+    .audit-ui-advanced-meta,
+    .audit-action-group-head,
+    .audit-action-group-tools {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .audit-action-group-toggle {
+        width: 100%;
+    }
+
+    .audit-action-item-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .audit-ui-filter-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .audit-ui-reset-link {
+        justify-content: center;
+    }
+
+    .audit-ui-table,
+    .audit-ui-table thead,
+    .audit-ui-table tbody,
+    .audit-ui-table tr,
+    .audit-ui-table th,
+    .audit-ui-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .audit-ui-table thead {
+        display: none;
+    }
+
+    .audit-ui-table tbody {
+        display: grid;
+        gap: 12px;
+    }
+
+    .audit-ui-table tbody tr {
+        border: 1px solid #f3d6e5;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+        background: #ffffff;
+    }
+
+    .audit-ui-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 12px 14px;
+        text-align: right;
+        white-space: normal;
+        border-bottom: 1px solid #fce7f3;
+    }
+
+    .audit-ui-table td::before {
+        content: attr(data-label);
+        color: #9d174d;
+        font-weight: 700;
+        text-align: left;
+    }
+
+    .audit-ui-table td:last-child {
+        border-bottom: none;
+    }
+
+    .audit-ui-table td.audit-empty-state {
+        display: block;
+        text-align: center;
+    }
+
+    .audit-ui-table td.audit-empty-state::before {
+        content: none;
+    }
+
+    .audit-ui-row-actions {
+        align-items: flex-start;
+    }
+}
+</style>
+
+<div class="module-card audit-ui-shell">
+    <div class="audit-ui-page-head">
+        <div class="audit-ui-title-block">
+            <h2>Audit Trail</h2>
+            <p>Review user activity, order updates, payment actions, and archived records in one cleaner monitoring workspace.</p>
+        </div>
+        <div class="audit-ui-top-actions">
+            <a href="{{ archive_toggle_url }}" class="audit-ui-toolbar-btn audit-ui-toolbar-btn-soft">
+                <i class="fas fa-box-archive"></i>
+                <span>{% if is_archived_view %}Back to Active{% else %}View Archived{% endif %}</span>
+            </a>
+            <a href="{{ export_tab_url }}" class="audit-ui-toolbar-btn audit-ui-toolbar-btn-outline">
+                <i class="fas fa-download"></i>
+                <span>Export View</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="audit-ui-tabs">
+        <a href="{{ records_tab_url }}" class="audit-ui-tab {% if current_tab == 'records' %}is-active{% endif %}">Record Logs</a>
+        <a href="{{ export_tab_url }}" class="audit-ui-tab {% if current_tab == 'export' %}is-active{% endif %}">Export Logs</a>
+    </div>
+
+    <div class="audit-ui-summary-grid">
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Visible Logs</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.total_records }}</span>
+            <div class="audit-ui-summary-copy">Entries in the current filtered {{ is_archived_view|yesno:"archived,active" }} view.</div>
+        </article>
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Users Involved</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.unique_users }}</span>
+            <div class="audit-ui-summary-copy">Distinct user accounts represented in this result set.</div>
+        </article>
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Session Events</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.login_events }}</span>
+            <div class="audit-ui-summary-copy">{{ activity_log_summary.session_events }} total login and logout actions.</div>
+        </article>
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Order Events</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.order_events }}</span>
+            <div class="audit-ui-summary-copy">Cake and package order related activity in the filtered range.</div>
+        </article>
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Archive Actions</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.archive_events }}</span>
+            <div class="audit-ui-summary-copy">Archive and restore events captured in this view.</div>
+        </article>
+        <article class="audit-ui-summary-card">
+            <span class="audit-ui-summary-label">Modules Touched</span>
+            <span class="audit-ui-summary-value">{{ activity_log_summary.module_count }}</span>
+            <div class="audit-ui-summary-copy">Unique modules represented after filters are applied.</div>
+        </article>
+    </div>
+
+    <form method="get" class="audit-ui-filter-card" data-audit-filter-form>
+        <input type="hidden" name="tab" value="{{ current_tab }}">
+        {% if is_archived_view %}
+        <input type="hidden" name="archived" value="1">
+        {% endif %}
+
+        <div class="audit-ui-filter-card-head">
+            <div>
+                <h3 class="audit-ui-filter-card-title">Search And Filters</h3>
+                <p class="audit-ui-filter-card-copy">Use the main filter bar for quick narrowing, then open advanced filters only when you need action-level refinement.</p>
+            </div>
+            <div class="audit-ui-filter-card-actions">
+                <button type="submit" class="audit-ui-toolbar-btn audit-ui-toolbar-btn-primary">
+                    <i class="fas fa-filter"></i>
+                    <span>Apply Filters</span>
+                </button>
+            </div>
+        </div>
+
+        <label class="audit-ui-search-field">
+            <i class="fas fa-search"></i>
+            <input type="text" name="q" value="{{ current_filters.search }}" placeholder="Search by user, action, module, record ID, or description">
+        </label>
+
+        <div class="audit-ui-filter-grid">
+            <label class="audit-ui-inline-filter">
+                <span>Date From</span>
+                <input type="date" name="date_from" value="{{ current_filters.date_from }}">
+            </label>
+            <label class="audit-ui-inline-filter">
+                <span>Date To</span>
+                <input type="date" name="date_to" value="{{ current_filters.date_to }}">
+            </label>
+            <label class="audit-ui-inline-filter">
+                <span>User</span>
+                <select name="actor">
+                    <option value="">All Users</option>
+                    {% for actor in actor_options %}
+                    <option value="{{ actor.id }}" {% if current_filters.actor == actor.id|stringformat:"s" %}selected{% endif %}>{{ actor.username }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="audit-ui-inline-filter">
+                <span>Module</span>
+                <select name="target_type">
+                    <option value="">All Modules</option>
+                    {% for target_type in target_type_options %}
+                    <option value="{{ target_type }}" {% if current_filters.target_type == target_type %}selected{% endif %}>{{ target_type|title }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="audit-ui-inline-filter">
+                <span>Record ID</span>
+                <input type="text" name="record_id" value="{{ current_filters.record_id }}" placeholder="Order or record ID">
+            </label>
+        </div>
+
+        <details class="audit-ui-advanced-filters" id="auditAdvancedFilters" {% if current_filters.action_values %}open{% endif %}>
+            <summary>
+                <div class="audit-ui-advanced-summary">
+                    <div>
+                        <strong>Advanced Action Filters</strong>
+                        <span class="audit-ui-advanced-summary-copy">Group related actions, search faster, and keep action-level filtering tidy until you are ready to apply it.</span>
+                        <span class="audit-ui-advanced-interaction">
+                            <i class="fas fa-hand-pointer"></i>
+                            <span data-advanced-summary-copy>Click to expand filters</span>
+                        </span>
+                    </div>
+                    <div class="audit-ui-advanced-trigger-wrap">
+                        <span class="audit-ui-advanced-total" data-advanced-selected aria-live="polite">{{ current_filters.action_values|length }} selected</span>
+                        <span class="audit-ui-advanced-trigger" data-advanced-trigger-label aria-hidden="true">
+                            <i class="fas fa-sliders"></i>
+                            <span>Tap to open</span>
+                        </span>
+                    </div>
+                </div>
+                <i class="fas fa-chevron-down audit-ui-advanced-chevron" aria-hidden="true"></i>
+            </summary>
+            <div class="audit-ui-advanced-panel">
+                <div class="audit-ui-advanced-toolbar">
+                    <label class="audit-ui-action-search" for="auditActionSearch">
+                        <i class="fas fa-search"></i>
+                        <input type="search" id="auditActionSearch" placeholder="Search actions or event names" aria-label="Search actions" data-action-search-input>
+                    </label>
+                    <div class="audit-ui-advanced-toolbar-actions">
+                        <button type="button" class="audit-ui-toolbar-btn audit-ui-toolbar-btn-outline audit-ui-toolbar-btn-compact" data-clear-all-actions>
+                            <i class="fas fa-broom"></i>
+                            <span>Clear All</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="audit-ui-advanced-meta">
+                    <div class="audit-ui-filter-note">Selections stay in place while you open or collapse categories. Filters only apply when you click Apply Filters.</div>
+                    <span class="audit-action-group-count" data-advanced-selected aria-live="polite">{{ current_filters.action_values|length }} selected</span>
+                </div>
+                <div class="audit-action-accordion">
+                    {% for group in action_groups %}
+                    <section class="audit-action-group{% if not group.has_actions %} is-empty{% endif %}" data-action-group >
+                        <div class="audit-action-group-card">
+                            <div class="audit-action-group-head">
+                                <button type="button" class="audit-action-group-toggle" data-group-toggle aria-expanded="{% if group.default_open %}true{% else %}false{% endif %}" aria-controls="audit-group-{{ group.key }}">
+                                    <span class="audit-action-group-icon"><i class="fas fa-{{ group.icon }}"></i></span>
+                                    <span class="audit-action-group-copy">
+                                        <strong>{{ group.label }}</strong>
+                                        <span>{{ group.description }}</span>
+                                    </span>
+                                </button>
+                                <div class="audit-action-group-tools">
+                                    <span class="audit-action-group-count" data-group-selected aria-live="polite">{{ group.selected_count }} selected</span>
+                                    <label class="audit-action-select-all">
+                                        <input type="checkbox" data-select-all {% if group.selected_count and group.selected_count == group.total_actions %}checked{% endif %} {% if not group.has_actions %}disabled{% endif %}>
+                                        <span>Select All</span>
+                                    </label>
+                                    <button type="button" class="audit-action-clear-btn" data-clear-group {% if not group.has_actions or not group.selected_count %}disabled{% endif %}>Clear Category</button>
+                                </div>
+                            </div>
+                            <div class="audit-action-group-body" id="audit-group-{{ group.key }}" data-group-body {% if not group.default_open %}hidden{% endif %}>
+                                {% if group.has_actions %}
+                                <div class="audit-action-item-grid">
+                                    {% for action in group.actions %}
+                                    <label class="audit-action-item {% if action.selected %}is-checked{% endif %}" data-action-item data-search-text="{{ action.search_text }}">
+                                        <input type="checkbox" name="action" value="{{ action.value }}" {% if action.selected %}checked{% endif %}>
+                                        <span class="audit-action-item-indicator"><i class="fas fa-check"></i></span>
+                                        <span class="audit-action-item-copy">
+                                            <strong>{{ action.label }}</strong>
+                                        </span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                                <div class="audit-action-empty-search" data-empty-search hidden>No actions in {{ group.label }} match this search.</div>
+                                {% else %}
+                                <div class="audit-action-category-empty">No audit actions in this category yet.</div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </section>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+
+        <div class="audit-ui-filter-footer">
+            <div class="audit-ui-filter-note">Main filters stay visible, while detailed action filters stay tucked away until needed.</div>
+            <a href="{{ reset_filters_url }}" class="audit-ui-reset-link">
+                <i class="fas fa-rotate-left"></i>
+                <span>Reset Filters</span>
+            </a>
+        </div>
+    </form>
+
+    {% if active_filter_chips %}
+    <div class="audit-ui-chipbar">
+        {% for chip in active_filter_chips %}
+        <span class="audit-filter-chip">{{ chip }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if current_tab == 'records' %}
+    <section class="audit-ui-section-card">
+        <div class="audit-ui-section-head">
+            <div>
+                <h3>Audit Records</h3>
+                <p>{{ activity_logs_pagination.summary }}</p>
+            </div>
+            <div class="audit-ui-section-meta">
+                {% if date_range_label %}
+                <span class="audit-ui-range-pill">{{ date_range_label }}</span>
+                {% endif %}
+                <span class="audit-ui-view-pill">{% if is_archived_view %}Archived View{% else %}Active View{% endif %}</span>
+            </div>
+        </div>
+
+        <form id="activityLogsBulkForm" method="post" action="{% url 'admin_activity_logs_bulk_action' %}" class="admin-bulk-toolbar" data-bulk-form>
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ current_page_url }}">
+            <div class="admin-bulk-toolbar-group">
+                <span class="admin-bulk-count" data-bulk-count-for="activityLogsBulkForm">0 selected</span>
+                <span class="audit-ui-filter-note">Batch archive tools follow the current filtered view and keep the single-entry button intact.</span>
+            </div>
+            <div class="admin-bulk-toolbar-group">
+                <select name="action" class="form-control">
+                    <option value="">Bulk action</option>
+                    <option value="{% if is_archived_view %}restore{% else %}archive{% endif %}" data-confirm="{% if is_archived_view %}Restore{% else %}Archive{% endif %} {count} selected audit trail entries?">{% if is_archived_view %}Restore selected entries{% else %}Archive selected entries{% endif %}</option>
+                </select>
+                <button type="submit" class="btn-primary" data-bulk-submit disabled>Apply</button>
+            </div>
+        </form>
+
+        {% if activity_logs_pagination.has_multiple_pages %}
+        <div class="audit-pagination-row is-top">
+            <span>{{ activity_logs_pagination.summary }}</span>
+            <div class="audit-ui-page-controls">
+                {% if activity_logs_pagination.prev_url %}
+                <a href="{{ activity_logs_pagination.prev_url }}" class="audit-ui-page-btn">Previous</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Previous</span>
+                {% endif %}
+                <span class="audit-ui-page-indicator">Page {{ activity_logs.number }} of {{ activity_logs.paginator.num_pages }}</span>
+                {% if activity_logs_pagination.next_url %}
+                <a href="{{ activity_logs_pagination.next_url }}" class="audit-ui-page-btn">Next</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Next</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if activity_logs %}
+        <div class="audit-ui-table-wrap">
+            <table class="audit-ui-table">
+                <thead>
+                    <tr>
+                        <th class="admin-bulk-select-head"><input type="checkbox" class="admin-bulk-checkbox" data-bulk-toggle-for="activityLogsBulkForm" aria-label="Select all audit trail entries"></th>
+                        <th>Date / Time</th>
+                        <th>User</th>
+                        <th>Role</th>
+                        <th>Module</th>
+                        <th>Action</th>
+                        <th>Record ID</th>
+                        <th>Details</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in activity_logs %}
+                    <tr>
+                        <td data-label="Select" class="admin-bulk-select-cell"><input type="checkbox" class="admin-bulk-checkbox" name="selected_ids" value="{{ log.id }}" form="activityLogsBulkForm" aria-label="Select audit trail entry {{ log.id }}"></td>
+                        <td data-label="Date / Time">{{ log.exact_timestamp }}</td>
+                        <td data-label="User">
+                            <div class="audit-ui-user-cell">
+                                <strong>{{ log.display_actor }}</strong>
+                                {% if not log.actor %}
+                                <span>Removed account</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td data-label="Role">
+                            <span class="audit-role-badge audit-role-badge-{{ log.role_badge_key }}">{{ log.role_badge_label }}</span>
+                        </td>
+                        <td data-label="Module">
+                            <div class="audit-ui-module-cell">
+                                <strong>{{ log.display_module }}</strong>
+                                <span>{{ log.display_target }}</span>
+                            </div>
+                        </td>
+                        <td data-label="Action">
+                            <span class="audit-action-badge audit-action-badge-{{ log.action_badge_key }}">{{ log.display_action }}</span>
+                        </td>
+                        <td data-label="Record ID">
+                            <div class="audit-ui-record-cell">
+                                <strong>{{ log.display_record_id }}</strong>
+                                <span>{% if log.target_id %}Linked record{% else %}No record link{% endif %}</span>
+                            </div>
+                        </td>
+                        <td data-label="Details">
+                            <div class="audit-ui-description-cell">
+                                <details class="audit-ui-description-details">
+                                    <summary class="audit-ui-description-toggle">{{ log.description|truncatechars:110 }}</summary>
+                                    <div class="audit-ui-description-full">{{ log.description }}</div>
+                                </details>
+                            </div>
+                        </td>
+                        <td data-label="Status">
+                            <div class="audit-ui-row-actions">
+                                <span class="audit-ui-row-state {% if is_archived_view %}audit-ui-row-state-archived{% else %}audit-ui-row-state-active{% endif %}">{% if is_archived_view %}Archived{% else %}Active{% endif %}</span>
+                                <form method="post" action="{% url 'admin_activity_log_delete' log.id %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ current_page_url }}">
+                                    <button type="submit" class="audit-ui-inline-btn {% if is_archived_view %}audit-ui-inline-btn-restore{% else %}audit-ui-inline-btn-archive{% endif %}" onclick="return confirm('{% if is_archived_view %}Restore{% else %}Archive{% endif %} this audit trail entry?');">
+                                        <i class="fas {% if is_archived_view %}fa-rotate-left{% else %}fa-box-archive{% endif %}"></i>
+                                        <span>{% if is_archived_view %}Restore{% else %}Archive{% endif %}</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="audit-empty-state">
+            <i class="fas fa-inbox"></i>
+            <p>No audit trail entries matched the selected filters.</p>
+        </div>
+        {% endif %}
+
+        {% if activity_logs_pagination.has_multiple_pages %}
+        <div class="audit-pagination-row is-bottom">
+            <span>{{ activity_logs_pagination.summary }}</span>
+            <div class="audit-ui-page-controls">
+                {% if activity_logs_pagination.prev_url %}
+                <a href="{{ activity_logs_pagination.prev_url }}" class="audit-ui-page-btn">Previous</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Previous</span>
+                {% endif %}
+                <span class="audit-ui-page-indicator">Page {{ activity_logs.number }} of {{ activity_logs.paginator.num_pages }}</span>
+                {% if activity_logs_pagination.next_url %}
+                <a href="{{ activity_logs_pagination.next_url }}" class="audit-ui-page-btn">Next</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Next</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </section>
+    {% else %}
+    <section class="audit-ui-section-card">
+        <div class="audit-ui-section-head">
+            <div>
+                <h3>Export Logs</h3>
+                <p>Download the filtered audit trail or preview the same window before printing and reporting.</p>
+            </div>
+            <div class="audit-ui-section-meta">
+                {% if date_range_label %}
+                <span class="audit-ui-range-pill">{{ date_range_label }}</span>
+                {% endif %}
+                <span class="audit-ui-view-pill">{{ export_window_days }}-Day Window</span>
+            </div>
+        </div>
+
+        <div class="audit-ui-export-grid">
+            <a href="{{ export_csv_url }}" class="audit-ui-export-card">
+                <i class="fas fa-file-csv"></i>
+                <strong>Export CSV</strong>
+                <span>Quick flat-file export for spreadsheets and raw sharing.</span>
+            </a>
+            <a href="{{ export_xlsx_url }}" class="audit-ui-export-card">
+                <i class="fas fa-file-excel"></i>
+                <strong>Export XLSX</strong>
+                <span>Workbook export for sorting, formulas, and printed reports.</span>
+            </a>
+            <a href="{{ export_pdf_url }}" class="audit-ui-export-card">
+                <i class="fas fa-file-pdf"></i>
+                <strong>Export PDF</strong>
+                <span>Formatted audit document for review and formal submission.</span>
+            </a>
+            <a href="{{ print_url }}" class="audit-ui-export-card" target="_blank" rel="noopener">
+                <i class="fas fa-print"></i>
+                <strong>Print Preview</strong>
+                <span>Open a print-friendly version of the currently filtered export range.</span>
+            </a>
+        </div>
+
+        <div class="audit-export-note">
+            Use the same active filters above before exporting. The export and print routes still use the existing {{ export_window_days }}-day limit.
+        </div>
+
+        {% if export_preview_pagination.has_multiple_pages %}
+        <div class="audit-pagination-row is-top">
+            <span>{{ export_preview_pagination.summary }}</span>
+            <div class="audit-ui-page-controls">
+                {% if export_preview_pagination.prev_url %}
+                <a href="{{ export_preview_pagination.prev_url }}" class="audit-ui-page-btn">Previous</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Previous</span>
+                {% endif %}
+                <span class="audit-ui-page-indicator">Page {{ export_preview_page.number }} of {{ export_preview_page.paginator.num_pages }}</span>
+                {% if export_preview_pagination.next_url %}
+                <a href="{{ export_preview_pagination.next_url }}" class="audit-ui-page-btn">Next</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Next</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="audit-ui-table-wrap">
+            <table class="audit-ui-table">
+                <thead>
+                    <tr>
+                        <th>Date / Time</th>
+                        <th>User</th>
+                        <th>Role</th>
+                        <th>Module</th>
+                        <th>Action</th>
+                        <th>Record ID</th>
+                        <th>Details</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in export_preview_rows %}
+                    <tr>
+                        <td data-label="Date / Time">{{ row.date_display }}</td>
+                        <td data-label="User">
+                            <div class="audit-ui-user-cell">
+                                <strong>{{ row.actor }}</strong>
+                            </div>
+                        </td>
+                        <td data-label="Role">
+                            <span class="audit-role-badge audit-role-badge-{{ row.role_badge_key }}">{{ row.role_badge_label }}</span>
+                        </td>
+                        <td data-label="Module">
+                            <div class="audit-ui-module-cell">
+                                <strong>{{ row.module }}</strong>
+                                <span>{{ row.target }}</span>
+                            </div>
+                        </td>
+                        <td data-label="Action">
+                            <span class="audit-action-badge audit-action-badge-{{ row.action_key }}">{{ row.action }}</span>
+                        </td>
+                        <td data-label="Record ID">
+                            <div class="audit-ui-record-cell">
+                                <strong>{{ row.display_record_id }}</strong>
+                                <span>{% if row.record_id %}Linked record{% else %}No record link{% endif %}</span>
+                            </div>
+                        </td>
+                        <td data-label="Details">
+                            <div class="audit-ui-description-cell">
+                                <details class="audit-ui-description-details">
+                                    <summary class="audit-ui-description-toggle">{{ row.description|truncatechars:110 }}</summary>
+                                    <div class="audit-ui-description-full">{{ row.description }}</div>
+                                </details>
+                            </div>
+                        </td>
+                        <td data-label="Status">
+                            <span class="audit-ui-row-state audit-ui-row-state-{{ row.status_key }}">{{ row.status_label }}</span>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="audit-empty-state">No audit entries available for the selected export window.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if export_preview_pagination.has_multiple_pages %}
+        <div class="audit-pagination-row is-bottom">
+            <span>{{ export_preview_pagination.summary }}</span>
+            <div class="audit-ui-page-controls">
+                {% if export_preview_pagination.prev_url %}
+                <a href="{{ export_preview_pagination.prev_url }}" class="audit-ui-page-btn">Previous</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Previous</span>
+                {% endif %}
+                <span class="audit-ui-page-indicator">Page {{ export_preview_page.number }} of {{ export_preview_page.paginator.num_pages }}</span>
+                {% if export_preview_pagination.next_url %}
+                <a href="{{ export_preview_pagination.next_url }}" class="audit-ui-page-btn">Next</a>
+                {% else %}
+                <span class="audit-ui-page-btn audit-ui-page-btn-disabled">Next</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const filterForm = document.querySelector('[data-audit-filter-form]');
+    const advancedFilters = document.getElementById('auditAdvancedFilters');
+    if (!filterForm || !advancedFilters) {
+        return;
+    }
+
+    const searchInput = filterForm.querySelector('[data-action-search-input]');
+    const totalSelectedNodes = Array.from(filterForm.querySelectorAll('[data-advanced-selected]'));
+    const groupNodes = Array.from(filterForm.querySelectorAll('[data-action-group]'));
+    const clearAllButton = filterForm.querySelector('[data-clear-all-actions]');
+    const summaryCopy = filterForm.querySelector('[data-advanced-summary-copy]');
+    const triggerLabel = filterForm.querySelector('[data-advanced-trigger-label] span');
+    const storageKey = 'hanilies-audit-advanced-filters-open';
+
+    function actionCheckboxes(scope) {
+        return Array.from(scope.querySelectorAll('input[type="checkbox"][name="action"]'));
+    }
+
+    function formatSelectedLabel(count) {
+        return count === 1 ? '1 selected' : count + ' selected';
+    }
+
+    function setCheckedState(itemNode, checked) {
+        itemNode.classList.toggle('is-checked', checked);
+    }
+
+    function updateGroupState(groupNode) {
+        const checkboxes = actionCheckboxes(groupNode);
+        const checkedCount = checkboxes.filter(function (checkbox) {
+            return checkbox.checked;
+        }).length;
+        const totalCount = checkboxes.length;
+        const selectAll = groupNode.querySelector('[data-select-all]');
+        const countNode = groupNode.querySelector('[data-group-selected]');
+        const clearButton = groupNode.querySelector('[data-clear-group]');
+
+        if (countNode) {
+            countNode.textContent = formatSelectedLabel(checkedCount);
+        }
+
+        if (selectAll) {
+            selectAll.checked = totalCount > 0 && checkedCount === totalCount;
+            selectAll.indeterminate = checkedCount > 0 && checkedCount < totalCount;
+        }
+
+        if (clearButton) {
+            clearButton.disabled = checkedCount === 0 || totalCount === 0;
+        }
+
+        checkboxes.forEach(function (checkbox) {
+            const itemNode = checkbox.closest('[data-action-item]');
+            if (itemNode) {
+                setCheckedState(itemNode, checkbox.checked);
+            }
+        });
+    }
+
+    function updateTotalSelected() {
+        const checkedCount = filterForm.querySelectorAll('input[type="checkbox"][name="action"]:checked').length;
+        totalSelectedNodes.forEach(function (node) {
+            node.textContent = formatSelectedLabel(checkedCount);
+        });
+    }
+
+    function updateAdvancedSummaryState() {
+        const isOpen = advancedFilters.open;
+        if (summaryCopy) {
+            summaryCopy.textContent = isOpen
+                ? 'Click again to collapse this section after choosing the actions you want.'
+                : 'Click to expand grouped actions, search inside them, and select multiple filters before applying.';
+        }
+        if (triggerLabel) {
+            triggerLabel.textContent = isOpen ? 'Tap to close' : 'Tap to open';
+        }
+    }
+
+    function filterActionItems() {
+        const term = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+        groupNodes.forEach(function (groupNode) {
+            const items = Array.from(groupNode.querySelectorAll('[data-action-item]'));
+            const emptySearch = groupNode.querySelector('[data-empty-search]');
+            let visibleItems = 0;
+
+            items.forEach(function (itemNode) {
+                const haystack = (itemNode.getAttribute('data-search-text') || '').toLowerCase();
+                const matches = !term || haystack.indexOf(term) !== -1;
+                itemNode.hidden = !matches;
+                if (matches) {
+                    visibleItems += 1;
+                }
+            });
+
+            if (emptySearch) {
+                emptySearch.hidden = visibleItems !== 0 || !term;
+            }
+
+            groupNode.classList.toggle('is-search-hidden', Boolean(term) && items.length > 0 && visibleItems === 0);
+        });
+    }
+
+    function toggleGroup(groupNode, forceExpanded) {
+        const toggle = groupNode.querySelector('[data-group-toggle]');
+        const body = groupNode.querySelector('[data-group-body]');
+        if (!toggle || !body) {
+            return;
+        }
+
+        const isExpanded = typeof forceExpanded === 'boolean'
+            ? forceExpanded
+            : toggle.getAttribute('aria-expanded') !== 'true';
+
+        toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        body.hidden = !isExpanded;
+    }
+
+    filterForm.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' && event.target.tagName !== 'BUTTON' && event.target.type !== 'submit') {
+            event.preventDefault();
+        }
+    });
+
+    if (searchInput) {
+        searchInput.addEventListener('input', filterActionItems);
+    }
+
+    if (clearAllButton) {
+        clearAllButton.addEventListener('click', function () {
+            actionCheckboxes(filterForm).forEach(function (checkbox) {
+                checkbox.checked = false;
+            });
+            groupNodes.forEach(function (groupNode) {
+                updateGroupState(groupNode);
+            });
+            updateTotalSelected();
+            if (searchInput) {
+                searchInput.value = '';
+                filterActionItems();
+            }
+        });
+    }
+
+    groupNodes.forEach(function (groupNode) {
+        const toggle = groupNode.querySelector('[data-group-toggle]');
+        const selectAll = groupNode.querySelector('[data-select-all]');
+        const clearButton = groupNode.querySelector('[data-clear-group]');
+        const checkboxes = actionCheckboxes(groupNode);
+
+        if (toggle) {
+            toggle.addEventListener('click', function () {
+                toggleGroup(groupNode);
+            });
+            toggleGroup(groupNode, toggle.getAttribute('aria-expanded') === 'true');
+        }
+
+        if (selectAll) {
+            selectAll.addEventListener('change', function () {
+                checkboxes.forEach(function (checkbox) {
+                    checkbox.checked = selectAll.checked;
+                });
+                updateGroupState(groupNode);
+                updateTotalSelected();
+            });
+        }
+
+        if (clearButton) {
+            clearButton.addEventListener('click', function () {
+                checkboxes.forEach(function (checkbox) {
+                    checkbox.checked = false;
+                });
+                updateGroupState(groupNode);
+                updateTotalSelected();
+            });
+        }
+
+        checkboxes.forEach(function (checkbox) {
+            checkbox.addEventListener('change', function () {
+                updateGroupState(groupNode);
+                updateTotalSelected();
+            });
+        });
+
+        updateGroupState(groupNode);
+    });
+
+    try {
+        const rememberedState = window.localStorage.getItem(storageKey);
+        if (rememberedState === 'true') {
+            advancedFilters.open = true;
+        } else if (rememberedState === 'false' && !filterForm.querySelector('input[name="action"]:checked')) {
+            advancedFilters.open = false;
+        }
+    } catch (error) {
+        // Ignore storage access issues and keep the server-rendered state.
+    }
+
+    advancedFilters.addEventListener('toggle', function () {
+        try {
+            window.localStorage.setItem(storageKey, advancedFilters.open ? 'true' : 'false');
+        } catch (error) {
+            // Ignore storage access issues.
+        }
+        updateAdvancedSummaryState();
+    });
+
+    filterActionItems();
+    updateTotalSelected();
+    updateAdvancedSummaryState();
+});
+</script>
+{% endblock %}
+
+
+
+

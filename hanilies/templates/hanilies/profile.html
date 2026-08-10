@@ -1,0 +1,546 @@
+{% extends 'hanilies/base.html' %}
+{% load static %}
+
+{% block title %}My Profile{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Page Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 fw-bold"><i class="fas fa-user-circle text-gold-pink me-2"></i>My Profile</h1>
+            <p class="lead text-gold-pink">Manage your account information and preferences</p>
+        </div>
+    </div>
+
+    <!-- Display Messages -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="row">
+        <!-- Left Column - Profile Card -->
+        <div class="col-lg-4 mb-4">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center p-4">
+                    <div class="position-relative d-inline-block mb-3">
+                        <div class="profile-avatar">
+                            <div class="avatar-placeholder-large mx-auto">
+                                {{ user.first_name|first|upper }}{{ user.last_name|first|upper }}
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-gold rounded-circle position-absolute bottom-0 end-0" style="width: 40px; height: 40px;" title="Change Photo">
+                            <i class="fas fa-camera"></i>
+                        </button>
+                    </div>
+                    <h4 class="fw-bold mb-1">{{ user.first_name }} {{ user.last_name }}</h4>
+                    <p class="text-muted mb-3">
+                        <i class="fas fa-envelope text-gold-pink me-1"></i> {{ user.email }}
+                    </p>
+                    <div class="d-flex justify-content-center gap-2 mb-3">
+                        <span class="badge bg-gold-pink px-3 py-2">Verified</span>
+                        <span class="badge bg-success px-3 py-2">Active</span>
+                    </div>
+                    <div class="d-flex justify-content-around mt-3 pt-3 border-top">
+                        <div class="text-center">
+                            <h5 class="text-gold-pink mb-1">{{ order_count }}</h5>
+                            <small class="text-muted">Orders</small>
+                        </div>
+                        <div class="text-center">
+                            <h5 class="text-gold-pink mb-1">P{{ total_spent }}</h5>
+                            <small class="text-muted">Spent</small>
+                        </div>
+                        <div class="text-center">
+                            <h5 class="text-gold-pink mb-1">{{ user.date_joined|date:"Y" }}</h5>
+                            <small class="text-muted">Member Since</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column - Edit Profile Form -->
+        <div class="col-lg-8">
+            <div class="d-flex flex-wrap gap-2 mb-4">
+                <a href="{% url 'profile' %}?section=profile&tab={{ active_profile_tab }}#profile-edit-card" class="btn {% if active_profile_section == 'profile' %}btn-gold{% else %}btn-outline-gold{% endif %}">Edit Profile</a>
+                <a href="{% url 'profile' %}?section=orders" class="btn {% if active_profile_section == 'orders' %}btn-gold{% else %}btn-outline-gold{% endif %}">Recent Orders</a>
+                <a href="{% url 'profile' %}?section=notifications" class="btn {% if active_profile_section == 'notifications' %}btn-gold{% else %}btn-outline-gold{% endif %}">Notifications</a>
+            </div>
+
+
+            {% if active_profile_section == 'profile' %}
+            <div class="card border-0 shadow-sm mb-4" id="profile-edit-card">
+                <div class="card-header bg-gold-pink text-white py-3">
+                    <h5 class="mb-0"><i class="fas fa-user-edit me-2"></i>Edit Profile Information</h5>
+                </div>
+                <div class="card-body p-4">
+                    <p class="text-muted mb-4">Update your name, email address, phone number, and delivery address here.</p>
+                    <!-- Profile Tabs -->
+                    <ul class="nav nav-tabs mb-4" id="profileTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <a class="nav-link {% if active_profile_tab == 'personal' %}active{% endif %}" id="personal-tab" href="{% url 'profile' %}?section=profile&tab=personal#profile-edit-card" role="tab" aria-selected="{% if active_profile_tab == 'personal' %}true{% else %}false{% endif %}">
+                                <i class="fas fa-user me-2"></i>Personal Info
+                            </a>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <a class="nav-link {% if active_profile_tab == 'password' %}active{% endif %}" id="password-tab" href="{% url 'profile' %}?section=profile&tab=password#profile-edit-card" role="tab" aria-selected="{% if active_profile_tab == 'password' %}true{% else %}false{% endif %}">
+                                <i class="fas fa-lock me-2"></i>Change Password
+                            </a>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <a class="nav-link {% if active_profile_tab == 'preferences' %}active{% endif %}" id="preferences-tab" href="{% url 'profile' %}?section=profile&tab=preferences#profile-edit-card" role="tab" aria-selected="{% if active_profile_tab == 'preferences' %}true{% else %}false{% endif %}">
+                                <i class="fas fa-bell me-2"></i>Preferences
+                            </a>
+                        </li>
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="profileTabsContent">
+                        <!-- Personal Info Tab -->
+                        <div class="tab-pane fade {% if active_profile_tab == 'personal' %}show active{% endif %}" id="personal" role="tabpanel">
+                            <form method="POST" action="{% url 'profile' %}?section=profile&tab=personal#profile-edit-card">
+                                {% csrf_token %}
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">First Name</label>
+                                        <input type="text" class="form-control" name="first_name" value="{{ user.first_name }}" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">Last Name</label>
+                                        <input type="text" class="form-control" name="last_name" value="{{ user.last_name }}" required>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Email Address</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-envelope text-gold-pink"></i></span>
+                                        <input type="email" class="form-control" name="email" value="{{ user.email }}" required>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Username</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-user-circle text-gold-pink"></i></span>
+                                        <input type="text" class="form-control" value="{{ user.username }}" readonly disabled>
+                                    </div>
+                                    <small class="text-muted">Username cannot be changed</small>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Phone Number</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-phone text-gold-pink"></i></span>
+                                        <input type="tel" class="form-control" name="phone" value="{{ user.profile.phone }}">
+                                    </div>
+                                </div>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">House No. / Street</label>
+                                        <input type="text" class="form-control" name="address_line_1" value="{{ profile_defaults.delivery_street_address }}" placeholder="Example: 123 Mabini Street">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">Barangay</label>
+                                        <input type="text" class="form-control" name="address_barangay" value="{{ profile_defaults.delivery_barangay }}" placeholder="Example: Poblacion 1">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">City / Municipality</label>
+                                        <select class="form-select" name="address_city">
+                                            <option value="">Select a service area</option>
+                                            {% for city, province in delivery_area_choices %}
+                                            <option value="{{ city }}" {% if profile_defaults.delivery_city == city %}selected{% endif %}>{{ city }} ({{ province }})</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-bold">Landmark</label>
+                                        <input type="text" class="form-control" name="address_landmark" value="{{ profile_defaults.delivery_landmark }}" placeholder="Example: Near City Hall">
+                                    </div>
+                                    <div class="col-12">
+                                        <small class="text-muted">Saved delivery addresses must use one of the listed service areas.</small>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="profile-action-row">
+                                    <a href="{% url 'order_tracking' %}" class="btn btn-outline-gold">View Orders</a>
+                                    <a href="{% url 'home' %}" class="btn btn-outline-gold">Cancel</a>
+                                    <button type="submit" class="btn btn-gold">Save Changes</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Change Password Tab -->
+                        <div class="tab-pane fade {% if active_profile_tab == 'password' %}show active{% endif %}" id="password" role="tabpanel">
+                            <form method="POST" action="{% url 'change_password' %}?section=profile&tab=password#profile-edit-card">
+                                {% csrf_token %}
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Current Password</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-lock text-gold-pink"></i></span>
+                                        <input type="password" class="form-control" name="current_password" placeholder="Enter current password" required>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">New Password</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-lock text-gold-pink"></i></span>
+                                        <input type="password" class="form-control" name="new_password" id="newPassword" placeholder="Enter new password" required>
+                                    </div>
+                                    <small class="text-muted">Use at least 8 characters and avoid common or personal passwords.</small>
+                                    <div class="progress mt-2" style="height: 4px;">
+                                        <div id="passwordStrength" class="progress-bar" style="width: 0%;"></div>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Confirm New Password</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light"><i class="fas fa-lock text-gold-pink"></i></span>
+                                        <input type="password" class="form-control" name="confirm_password" id="confirmPassword" placeholder="Confirm new password" required>
+                                    </div>
+                                    <div id="passwordMatchError" class="text-danger small mt-1" style="display: none;">
+                                        <i class="fas fa-exclamation-circle me-1"></i>Passwords do not match
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="profile-action-row">
+                                    <button type="button" class="btn btn-outline-gold" onclick="resetPasswordForm()">Cancel</button>
+                                    <button type="submit" class="btn btn-gold">Update Password</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Preferences Tab -->
+                        <div class="tab-pane fade {% if active_profile_tab == 'preferences' %}show active{% endif %}" id="preferences" role="tabpanel">
+                            <form method="POST" action="{% url 'update_preferences' %}?section=profile&tab=preferences#profile-edit-card">
+                                {% csrf_token %}
+                                <h6 class="fw-bold mb-3">Notification Preferences</h6>
+                                <div class="mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="account_notifications" id="accountNotifications" checked>
+                                        <label class="form-check-label" for="accountNotifications">
+                                            <strong>Account Notifications</strong><br>
+                                            <small class="text-muted">See order and payment updates inside your Hanilies account</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="promo_emails" id="promoEmails">
+                                        <label class="form-check-label" for="promoEmails">
+                                            <strong>Promotional Emails</strong><br>
+                                            <small class="text-muted">Receive special offers and new product announcements</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="profile-action-row">
+                                    <button type="button" class="btn btn-outline-gold" onclick="resetPreferences()">Reset</button>
+                                    <button type="submit" class="btn btn-gold">Save Preferences</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% elif active_profile_section == 'orders' %}
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-receipt me-2"></i>Recent Orders</h5>
+                    <a href="{% url 'order_tracking' %}" class="btn btn-sm btn-outline-gold">Open Tracking</a>
+                </div>
+                <div class="card-body p-4">
+                    {% if recent_orders %}
+                        <div class="d-flex flex-column gap-3">
+                            {% for item in recent_orders %}
+                                <div class="text-reset border rounded-3 p-3 order-history-link">
+                                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                                        <div>
+                                            <div class="fw-semibold">
+                                                {% if item.order_type == 'cake' %}
+                                                Cake Order #{{ item.order.id }}
+                                                {% else %}
+                                                Package Order #{{ item.order.id }}
+                                                {% endif %}
+                                            </div>
+                                            <div class="text-muted small mt-1">{{ item.title }}</div>
+                                            <div class="small text-muted mt-2">Placed {{ item.order.created_at|date:"M d, Y h:i A" }}</div>
+                                            {% if item.schedule_label %}
+                                            <div class="small text-muted">
+                                                {% if item.order_type == 'cake' %}
+                                                Delivery: {{ item.schedule_label|date:"F d, Y" }}
+                                                {% else %}
+                                                Event: {{ item.schedule_label|date:"F d, Y" }}
+                                                {% endif %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="text-end d-flex flex-column align-items-end gap-2">
+                                            <span class="badge bg-gold-pink px-3 py-2">{{ item.order.get_order_status_display }}</span>
+                                            {% if item.order.is_archived %}
+                                            <span class="badge bg-secondary">Archived Record</span>
+                                            {% endif %}
+                                            <div class="d-flex flex-wrap justify-content-end gap-2">
+                                                <a href="{% url 'order_tracking' %}?type={{ item.order_type }}&id={{ item.order.id }}" class="btn btn-sm btn-outline-gold">Open</a>
+                                                <form method="post" action="{% url 'customer_order_archive' item.order_type item.order.id %}" class="m-0">
+                                                    {% csrf_token %}
+                                                    {% if item.can_customer_archive %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Archive</button>
+                                                    {% else %}
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Available for completed, cancelled, or refunded orders only">Archive</button>
+                                                    {% endif %}
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">Your recent cake and package orders will appear here after checkout.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-box-archive me-2"></i>Archived Orders</h5>
+                    <span class="badge bg-secondary px-3 py-2">{{ archived_orders|length }}</span>
+                </div>
+                <div class="card-body p-4">
+                    {% if archived_orders %}
+                        <div class="d-flex flex-column gap-3">
+                            {% for item in archived_orders %}
+                                <div class="text-reset border rounded-3 p-3 order-history-link">
+                                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                                        <div>
+                                            <div class="fw-semibold">
+                                                {% if item.order_type == 'cake' %}
+                                                Cake Order #{{ item.order.id }}
+                                                {% else %}
+                                                Package Order #{{ item.order.id }}
+                                                {% endif %}
+                                            </div>
+                                            <div class="text-muted small mt-1">{{ item.title }}</div>
+                                            <div class="small text-muted mt-2">Archived {{ item.order.customer_archived_at|date:"M d, Y h:i A" }}</div>
+                                            {% if item.schedule_label %}
+                                            <div class="small text-muted">
+                                                {% if item.order_type == 'cake' %}
+                                                Delivery: {{ item.schedule_label|date:"F d, Y" }}
+                                                {% else %}
+                                                Event: {{ item.schedule_label|date:"F d, Y" }}
+                                                {% endif %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="text-end d-flex flex-column align-items-end gap-2">
+                                            <span class="badge bg-gold-pink px-3 py-2">{{ item.order.get_order_status_display }}</span>
+                                            {% if item.order.is_archived %}
+                                            <span class="badge bg-secondary">Archived Record</span>
+                                            {% endif %}
+                                            <div class="d-flex flex-wrap justify-content-end gap-2">
+                                                <a href="{% url 'order_tracking' %}?type={{ item.order_type }}&id={{ item.order.id }}" class="btn btn-sm btn-outline-gold">Open</a>
+                                                <form method="post" action="{% url 'customer_order_unarchive' item.order_type item.order.id %}" class="m-0">
+                                                    {% csrf_token %}
+                                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Unarchive</button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">Archived orders will appear here after you archive them.</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% elif active_profile_section == 'notifications' %}
+
+            <div class="card border-0 shadow-sm" id="profile-notifications-card">
+                <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fas fa-bell me-2"></i>Recent Notifications</h5>
+                    <span class="badge bg-gold-pink px-3 py-2">{{ unread_notification_count }} unread</span>
+                </div>
+                <div class="card-body p-4">
+                    {% if recent_notifications %}
+                        <div class="d-flex flex-column gap-3">
+                            {% for notification in recent_notifications %}
+                                <div class="border rounded-3 p-3 {% if not notification.is_read %}border-warning bg-light{% endif %}">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                            <div class="fw-semibold">{{ notification.title }}</div>
+                                            <div class="text-muted small mt-1">{{ notification.message }}</div>
+                                            <div class="small text-muted mt-2">{{ notification.created_at|date:"M d, Y h:i A" }}</div>
+                                        </div>
+                                        {% if notification.cake_order %}
+                                            <a href="{% url 'order_tracking' %}?type=cake&id={{ notification.cake_order.id }}" class="btn btn-sm btn-outline-gold">Open</a>
+                                        {% elif notification.package_order %}
+                                            <a href="{% url 'order_tracking' %}?type=package&id={{ notification.package_order.id }}" class="btn btn-sm btn-outline-gold">Open</a>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">Status updates from the admin team will appear here.</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    // Password match validation
+    document.addEventListener('DOMContentLoaded', function() {
+        const newPassword = document.getElementById('newPassword');
+        const confirmPassword = document.getElementById('confirmPassword');
+        const passwordError = document.getElementById('passwordMatchError');
+
+        function validatePasswordMatch() {
+            if (newPassword.value !== '' && confirmPassword.value !== '') {
+                if (newPassword.value === confirmPassword.value) {
+                    passwordError.style.display = 'none';
+                    return true;
+                } else {
+                    passwordError.style.display = 'block';
+                    return false;
+                }
+            }
+            passwordError.style.display = 'none';
+            return false;
+        }
+
+        function checkPasswordStrength() {
+            const password = newPassword.value;
+            const strengthBar = document.getElementById('passwordStrength');
+            if (strengthBar) {
+                let strength = 0;
+                if (password.length >= 8) strength += 25;
+                if (password.match(/[A-Z]/)) strength += 25;
+                if (password.match(/[0-9]/)) strength += 25;
+                if (password.match(/[^a-zA-Z0-9]/)) strength += 25;
+                strengthBar.style.width = strength + '%';
+                if (strength >= 75) {
+                    strengthBar.className = 'progress-bar bg-success';
+                } else if (strength >= 50) {
+                    strengthBar.className = 'progress-bar bg-warning';
+                } else {
+                    strengthBar.className = 'progress-bar bg-danger';
+                }
+            }
+        }
+
+        newPassword.addEventListener('input', validatePasswordMatch);
+        newPassword.addEventListener('input', checkPasswordStrength);
+        confirmPassword.addEventListener('input', validatePasswordMatch);
+    });
+
+    function resetPasswordForm() {
+        document.querySelector('#password input[name="current_password"]').value = '';
+        document.querySelector('#password input[name="new_password"]').value = '';
+        document.querySelector('#password input[name="confirm_password"]').value = '';
+        document.getElementById('passwordMatchError').style.display = 'none';
+        const strengthBar = document.getElementById('passwordStrength');
+        if (strengthBar) {
+            strengthBar.style.width = '0%';
+        }
+    }
+
+    function resetPreferences() {
+        const accountNotifications = document.querySelector('#preferences input[name="account_notifications"]');
+        const promoEmails = document.querySelector('#preferences input[name="promo_emails"]');
+        if (accountNotifications) {
+            accountNotifications.checked = true;
+        }
+        if (promoEmails) {
+            promoEmails.checked = false;
+        }
+    }
+</script>
+
+<style>
+    .avatar-placeholder-large {
+        width: 120px;
+        height: 120px;
+        background: linear-gradient(135deg, #FFB6C1, #FF69B4);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 2.5rem;
+        border: 4px solid white;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    .password-strength {
+        height: 4px;
+        margin-top: 5px;
+        border-radius: 2px;
+        transition: all 0.3s ease;
+    }
+    .form-switch .form-check-input:checked {
+        background-color: #FF69B4;
+        border-color: #FF69B4;
+    }
+    .order-history-link {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .order-history-link:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.08);
+    }
+    .profile-action-row {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+    @media (max-width: 576px) {
+        .profile-action-row {
+            display: grid;
+            grid-template-columns: 1fr;
+            align-items: stretch;
+            width: 100%;
+        }
+        .profile-action-row .btn {
+            width: 100%;
+            min-height: 50px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: normal;
+        }
+        .order-history-link > .d-flex {
+            flex-direction: column;
+        }
+        .order-history-link .text-end {
+            align-items: stretch !important;
+            text-align: left !important;
+            width: 100%;
+        }
+        .order-history-link .text-end > .d-flex {
+            display: grid !important;
+            grid-template-columns: 1fr;
+            width: 100%;
+        }
+        .order-history-link .btn,
+        .order-history-link form,
+        .order-history-link form button {
+            width: 100%;
+        }
+        .order-history-link .badge {
+            align-self: flex-start;
+            white-space: normal;
+        }
+    }
+</style>
+{% endblock %}

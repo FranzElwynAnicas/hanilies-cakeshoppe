@@ -1,0 +1,275 @@
+{% extends 'hanilies/base.html' %}
+{% load static %}
+
+{% block title %}About Us{% endblock %}
+
+{% block content %}
+<div class="container py-4 about-page-shell">
+    <div class="row mb-5">
+        <div class="col-12 text-center">
+            <h1 class="display-4 fw-bold mb-3">About Hanilies Cakeshoppe</h1>
+            <p class="lead text-muted">Serving sweet memories since 2009</p>
+        </div>
+    </div>
+
+    <div class="row align-items-center mb-5 g-4">
+        <div class="col-md-6">
+            <button type="button" class="image-zoom-trigger about-story-trigger" data-zoom-src="{{ about_story_image.image_url }}" data-zoom-title="{{ about_story_image.title }}">
+                <img src="{{ about_story_image.image_url }}" class="img-fluid rounded-3 shadow-lg" alt="{{ about_story_image.title }}" style="--about-image-position: {{ about_story_image.image_position }};">
+                <span class="about-image-badge"><i class="fas fa-search-plus"></i> View image</span>
+            </button>
+        </div>
+        <div class="col-md-6 about-story-copy">
+            <h2 class="mb-4">{{ about_story_image.display_name }}</h2>
+            {% if about_story_image.display_position %}
+            <p class="text-gold-pink fw-semibold mb-2">{{ about_story_image.display_position }}</p>
+            {% endif %}
+            <p class="lead">Founded in 2009 by Ms. Teresa T. Rabillas, Hanilies Cakeshoppe began as a passion for baking family celebration cakes.</p>
+            <p>What started as a small home-based business has grown into an established enterprise with ten dedicated employees, handling a high volume of orders, particularly for first birthdays and during the peak season of December.</p>
+            <p>Today, we continue to serve our community with the same love and dedication that started it all, now enhanced with modern technology to serve you better.</p>
+        </div>
+    </div>
+
+    <div class="row mb-5 g-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body text-center p-5">
+                    <i class="fas fa-bullseye fa-4x text-gold-pink mb-4"></i>
+                    <h3 class="mb-3">Our Mission</h3>
+                    <p class="text-muted">To create sweet and memorable moments for our customers through high-quality, beautifully crafted cakes and exceptional service, while embracing innovation to enhance the customer experience.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body text-center p-5">
+                    <i class="fas fa-eye fa-4x text-gold-pink mb-4"></i>
+                    <h3 class="mb-3">Our Vision</h3>
+                    <p class="text-muted">To be the most trusted and preferred cake shop in the community, known for our commitment to quality, innovation in cake design, and exceptional customer service.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-12 text-center mb-4">
+            <h2>Our Core Values</h2>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center">
+                <i class="fas fa-heart fa-3x text-gold-pink mb-3"></i>
+                <h5>Passion</h5>
+                <p class="text-muted">We bake with love and dedication</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center">
+                <i class="fas fa-medal fa-3x text-gold-pink mb-3"></i>
+                <h5>Quality</h5>
+                <p class="text-muted">Only the finest ingredients</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center">
+                <i class="fas fa-hand-holding-heart fa-3x text-gold-pink mb-3"></i>
+                <h5>Service</h5>
+                <p class="text-muted">Customer satisfaction first</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center">
+                <i class="fas fa-lightbulb fa-3x text-gold-pink mb-3"></i>
+                <h5>Innovation</h5>
+                <p class="text-muted">Embracing new ideas and technology</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12 text-center mb-4">
+            <h2>Meet Our Team</h2>
+            <p class="lead text-muted">The people behind your sweet memories</p>
+        </div>
+        {% for member in about_team_members %}
+        <div class="col-sm-6 col-lg-3 mb-4">
+            <div class="card text-center h-100 about-team-card">
+                <button type="button"
+                        class="image-zoom-trigger about-team-trigger"
+                        data-zoom-src="{{ member.image.image_url }}"
+                        data-zoom-title="{{ member.name }}"
+                        data-zoom-gallery="about-team-gallery">
+                    <img src="{{ member.image.image_url }}" class="card-img-top rounded-circle p-3" alt="{{ member.name }}" style="--about-image-position: {{ member.image.image_position }};">
+                    <span class="about-image-badge about-image-badge-small"><i class="fas fa-search-plus"></i> Zoom</span>
+                </button>
+                <div class="card-body">
+                    <h5>{{ member.name }}</h5>
+                    <p class="text-gold-pink about-team-role">{{ member.role }}</p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<style>
+    .about-page-shell .card {
+        border: 1px solid rgba(255, 105, 180, 0.2);
+        box-shadow: 0 12px 28px rgba(31, 41, 55, 0.06);
+    }
+
+    .about-story-trigger,
+    .about-team-trigger {
+        position: relative;
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: none;
+        background: transparent;
+        text-align: inherit;
+        border-radius: 1.25rem;
+        overflow: hidden;
+    }
+
+    .about-story-trigger img {
+        width: 100%;
+        display: block;
+    }
+
+    .about-team-card .card-img-top {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+    }
+
+    .about-story-copy {
+        color: #374151;
+    }
+
+    .about-team-role {
+        margin-bottom: 0;
+        word-break: break-word;
+    }
+
+    .about-image-badge {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(17, 24, 39, 0.76);
+        color: white;
+        font-size: 0.82rem;
+        font-weight: 600;
+        opacity: 0;
+        transform: translateY(6px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: none;
+    }
+
+    .about-image-badge-small {
+        right: 50%;
+        bottom: 18px;
+        transform: translate(50%, 6px);
+    }
+
+    .about-story-trigger:hover .about-image-badge,
+    .about-story-trigger:focus-visible .about-image-badge,
+    .about-team-trigger:hover .about-image-badge,
+    .about-team-trigger:focus-visible .about-image-badge {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    .about-team-trigger:hover .about-image-badge-small,
+    .about-team-trigger:focus-visible .about-image-badge-small {
+        transform: translate(50%, 0);
+    }
+
+    @media (max-width: 768px) {
+        .about-page-shell {
+            padding-left: 6px;
+            padding-right: 6px;
+        }
+
+        .about-page-shell .display-4 {
+            font-size: 2.1rem;
+        }
+
+        .about-page-shell .lead {
+            font-size: 1rem;
+        }
+
+        .about-page-shell .card .card-body {
+            padding: 1.5rem;
+        }
+
+        .about-story-copy {
+            text-align: center;
+        }
+
+        .about-story-copy h2 {
+            margin-bottom: 1rem !important;
+        }
+
+        .about-story-copy .lead,
+        .about-story-copy p {
+            margin-left: auto;
+            margin-right: auto;
+            max-width: 34rem;
+        }
+
+        .about-team-card {
+            max-width: 360px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .about-image-badge,
+        .about-image-badge-small {
+            opacity: 1;
+            transform: none;
+            right: 14px;
+            left: auto;
+            bottom: 14px;
+            max-width: calc(100% - 28px);
+            font-size: 0.76rem;
+            padding: 7px 12px;
+        }
+
+        .about-team-card .card-body {
+            padding-top: 0.75rem;
+        }
+    }
+
+    @media (max-width: 576px) {
+        .about-page-shell {
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        .about-story-trigger {
+            border-radius: 1rem;
+        }
+
+        .about-page-shell .card .card-body {
+            padding: 1.25rem;
+        }
+
+        .about-page-shell h2 {
+            font-size: 1.6rem;
+        }
+
+        .about-page-shell h3 {
+            font-size: 1.35rem;
+        }
+
+        .about-page-shell h5 {
+            font-size: 1rem;
+        }
+    }
+</style>
+{% endblock %}
+

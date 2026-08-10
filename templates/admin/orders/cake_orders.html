@@ -1,0 +1,272 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Cake Orders{% endblock %}
+{% block page_title %}Cake Orders{% endblock %}
+{% block page_icon %}shopping-cart{% endblock %}
+
+{% block extra_css %}
+<style>
+    .orders-page-title {
+        color: #111827;
+        font-size: 1.05rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+    }
+
+    .order-primary {
+        color: #111827;
+        font-weight: 800;
+    }
+
+    .order-secondary {
+        color: #4b5563;
+        font-size: 0.85rem;
+        font-weight: 500;
+        line-height: 1.45;
+    }
+
+    .order-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 6px;
+        margin-top: 2px;
+        border-radius: 8px;
+        color: #1d4ed8;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .order-link:hover {
+        background: rgba(37, 99, 235, 0.08);
+        color: #1d4ed8;
+        text-decoration: underline;
+    }
+
+    .order-money {
+        color: #111827;
+        font-size: 0.95rem;
+        font-weight: 800;
+    }
+
+    .order-relative-time {
+        color: #111827;
+        font-weight: 700;
+    }
+
+    .order-empty-note {
+        color: #6b7280;
+        font-weight: 600;
+    }
+
+    .admin-order-status-form .form-control {
+        color: #111827;
+        font-weight: 600;
+    }
+
+    .admin-order-status-form .form-control option {
+        color: #111827;
+    }
+
+    .module-table td .status-badge,
+    .module-table td .btn-preview {
+        font-weight: 700;
+    }
+
+    .module-table td[data-label="Actions"] .btn-preview {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 6px;
+        border-radius: 8px;
+        color: #1d4ed8;
+        font-size: 0.84rem;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .module-table td[data-label="Actions"] .btn-preview:hover {
+        background: rgba(37, 99, 235, 0.08);
+        color: #1d4ed8;
+        text-decoration: underline;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="module-card">
+    <div class="module-header" style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <h2 class="orders-page-title"><i class="fas fa-list"></i> {% if is_archived_view %}Archived Cake Orders{% else %}All Cake Orders{% endif %}</h2>
+        <a href="{% if is_archived_view %}{% url 'admin_cake_orders' %}{% else %}{% url 'admin_cake_orders' %}?archived=1{% endif %}" class="btn-primary" style="text-decoration: none; background: {% if is_archived_view %}linear-gradient(135deg, #0f766e, #14b8a6){% else %}linear-gradient(135deg, #6b7280, #9ca3af){% endif %};">
+            <i class="fas fa-box-archive"></i> {% if is_archived_view %}Back to Active{% else %}View Archived{% endif %}
+        </a>
+    </div>
+    <form id="cakeOrdersBulkForm" method="post" action="{% url 'admin_cake_orders_bulk_action' %}" class="admin-bulk-toolbar" data-bulk-form>
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <div class="admin-bulk-toolbar-group">
+            <span class="admin-bulk-count" data-bulk-count-for="cakeOrdersBulkForm">0 selected</span>
+            <span class="order-secondary">Bulk status updates will skip any order your role cannot move to that state.</span>
+        </div>
+        <div class="admin-bulk-toolbar-group">
+            <select name="action" class="form-control">
+                <option value="">Bulk action</option>
+                <option value="pending" data-confirm="Move {count} selected cake orders to Pending Admin Approval?">Pending Admin Approval</option>
+                <option value="payment_retry" data-confirm="Move {count} selected cake orders to Awaiting Payment Resubmission?">Awaiting Payment Resubmission</option>
+                <option value="confirmed" data-confirm="Move {count} selected cake orders to Confirmed?">Confirmed</option>
+                <option value="preparing" data-confirm="Move {count} selected cake orders to Preparing?">Preparing</option>
+                <option value="ready_for_pickup" data-confirm="Move {count} selected cake orders to Ready for Pickup?">Ready for Pickup</option>
+                <option value="out_for_delivery" data-confirm="Move {count} selected cake orders to Out for Delivery?">Out for Delivery</option>
+                <option value="completed" data-confirm="Move {count} selected cake orders to Completed?">Completed</option>
+                <option value="cancelled" data-confirm="Move {count} selected cake orders to Cancelled?">Cancelled</option>
+                {% if can_bulk_archive %}
+                <option value="{% if is_archived_view %}restore{% else %}archive{% endif %}" data-confirm="{% if is_archived_view %}Restore{% else %}Archive{% endif %} {count} selected cake orders?">{% if is_archived_view %}Restore selected{% else %}Archive selected{% endif %}</option>
+                {% endif %}
+            </select>
+            <button type="submit" class="btn-primary" data-bulk-submit disabled>Apply</button>
+        </div>
+    </form>
+    <div class="table-responsive">
+        <table class="module-table mobile-card-table" data-pagination-mode="server">
+            <thead>
+                <tr><th class="admin-bulk-select-head"><input type="checkbox" class="admin-bulk-checkbox" data-bulk-toggle-for="cakeOrdersBulkForm" aria-label="Select all cake orders"></th><th>Order</th><th>Customer</th><th>Cake Details</th><th>Total</th><th>Status</th><th>Latest Payment</th><th>Last Activity</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for order in orders %}
+                <tr>
+                    <td data-label="Select" class="admin-bulk-select-cell"><input type="checkbox" class="admin-bulk-checkbox" name="selected_ids" value="{{ order.id }}" form="cakeOrdersBulkForm" aria-label="Select cake order {{ order.id }}"></td>
+                    <td data-label="Order"><strong class="order-primary">Cake Order #{{ order.id }}</strong></td>
+                    <td data-label="Customer">
+                        <strong class="order-primary">{{ order.user.get_full_name|default:order.user.username }}</strong>
+                        <div class="order-secondary">@{{ order.user.username }}</div>
+                    </td>
+                    <td data-label="Cake Details">
+                        <div class="order-primary">{{ order.cake.name|default:"Custom Cake" }}</div>
+                        <div class="order-secondary">Product ID: {{ order.cake.product_code|default:"Not assigned" }}</div>
+                        <div class="order-secondary">Quantity: {{ order.quantity }}</div>
+                    </td>
+                    <td data-label="Total"><strong class="order-money">&#8369;{{ order.total_price }}</strong></td>
+                    <td data-label="Status"><span class="status-badge status-{{ order.order_status }}">{{ order.get_order_status_display }}</span></td>
+                    <td data-label="Latest Payment">
+                        {% if order.latest_payment_status %}
+                        <div><span class="status-badge status-{{ order.latest_payment_status }}">{{ order.latest_payment_status_label }}</span></div>
+                        {% if order.latest_payment_summary_label %}<div class="order-secondary">{{ order.latest_payment_summary_label }}</div>{% endif %}
+                        {% if order.latest_payment_id %}
+                        <div class="order-secondary"><a class="order-link" href="{% url 'admin_payments' %}?highlight={{ order.latest_payment_id }}#payment-{{ order.latest_payment_id }}"><i class="fas fa-external-link-alt" aria-hidden="true"></i><span>Open in Payments</span></a></div>
+                        {% endif %}
+                        {% else %}
+                        <span class="order-secondary">No payment yet</span>
+                        {% endif %}
+                    </td>
+                    <td data-label="Last Activity">
+                        <span class="order-relative-time" title="{{ order.last_activity_at|date:'M j, Y g:i A' }}">{{ order.last_activity_at|timesince }} ago</span>
+                        <div class="order-secondary">{{ order.last_activity_at|date:"M j, Y" }}</div>
+                    </td>
+                    <td data-label="Actions">
+                        <div class="admin-table-action-stack">
+                            <a href="{% url 'admin_cake_order_view' order.id %}?next={{ request.get_full_path|urlencode }}" class="btn-preview">
+                                <i class="fas fa-eye"></i> Preview Summary
+                            </a>
+                            <form method="post"
+                                  action="{% url 'admin_cake_order_update' order.id %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+                                  data-update-url="{% url 'admin_cake_order_update' order.id %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+                                  data-delete-url="{% url 'admin_cake_order_delete' order.id %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}"
+                                  data-order-label="cake order #{{ order.id }}"
+                                  onsubmit="return submitOrderAction(this);"
+                                  class="admin-table-inline-form admin-order-status-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="status" value="{{ order.order_status }}">
+                                {% if order.allowed_status_updates or order.can_archive %}
+                                <div class="admin-table-select-row">
+                                    <select name="action"
+                                            class="form-control"
+                                            data-current-value="{{ order.order_status }}"
+                                            style="width: auto; display: inline-block; padding: 4px 8px; font-size: 0.8rem;">
+                                        <option value="{{ order.order_status }}" selected>{{ order.get_order_status_display }} (Current)</option>
+                                        {% for status_value, status_label in order.allowed_status_updates %}
+                                        {% if status_value != order.order_status %}
+                                        <option value="{{ status_value }}">{{ status_label }}</option>
+                                        {% endif %}
+                                        {% endfor %}
+                                        {% if order.can_archive %}
+                                        <option value="delete">{{ order.archive_action_label }}</option>
+                                        {% endif %}
+                                    </select>
+                                    <button type="submit" style="border: none; border-radius: 20px; padding: 4px 10px; background: linear-gradient(135deg, #FF69B4, #D4AF37); color: white; font-size: 0.8rem; font-weight: 700; cursor: pointer;">
+                                        Apply
+                                    </button>
+                                </div>
+                                {% else %}
+                                <span class="order-secondary">No status actions available</span>
+                                {% endif %}
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="9" class="text-center order-empty-note">No cake orders yet</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if orders.paginator.count %}
+    <div class="table-pagination">
+        <div class="table-pagination-info">{{ orders_pagination.summary }}</div>
+        {% if orders_pagination.has_multiple_pages %}
+        <div class="table-pagination-actions">
+            {% if orders_pagination.prev_url %}
+            <a href="{{ orders_pagination.prev_url }}" class="table-pagination-button">Previous</a>
+            {% else %}
+            <span class="table-pagination-button is-disabled">Previous</span>
+            {% endif %}
+            {% if orders_pagination.next_url %}
+            <a href="{{ orders_pagination.next_url }}" class="table-pagination-button">Next</a>
+            {% else %}
+            <span class="table-pagination-button is-disabled">Next</span>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function submitOrderAction(form) {
+    const actionField = form.querySelector('select[name="action"]');
+    const statusField = form.querySelector('input[name="status"]');
+    const selectedValue = actionField.value;
+    const currentValue = actionField.dataset.currentValue;
+
+    if (selectedValue === 'delete') {
+        const orderLabel = form.dataset.orderLabel || 'this order';
+        const actionLabel = actionField.options[actionField.selectedIndex].text || 'Archive Order';
+        const verb = actionLabel.toLowerCase().includes('restore') ? 'Restore' : 'Archive';
+        const message = verb === 'Restore'
+            ? `Restore ${orderLabel}? It will return to the active view.`
+            : `Archive ${orderLabel}? You can still retrieve it from the archived view.`;
+        const confirmed = window.confirm(message);
+
+        if (!confirmed) {
+            actionField.value = currentValue;
+            return false;
+        }
+
+        form.action = form.dataset.deleteUrl;
+        statusField.value = currentValue;
+        return true;
+    }
+
+    form.action = form.dataset.updateUrl;
+    statusField.value = selectedValue;
+    return true;
+}
+</script>
+{% endblock %}
+

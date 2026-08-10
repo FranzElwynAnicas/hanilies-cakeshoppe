@@ -1,0 +1,551 @@
+{% extends 'hanilies/base.html' %}
+{% load static %}
+{% load product_display %}
+
+{% block title %}Home{% endblock %}
+
+{% block extra_css %}
+<style>
+    .homepage-product-card {
+        align-self: stretch;
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+        min-height: 0;
+        width: 100%;
+    }
+
+    .homepage-product-card .product-card-media {
+        flex: 0 0 auto !important;
+        width: 100%;
+    }
+
+    .homepage-product-card .homepage-product-image-frame {
+        aspect-ratio: auto !important;
+        display: block !important;
+        flex: 0 0 260px !important;
+        height: 260px !important;
+        max-height: 260px !important;
+        min-height: 260px !important;
+        overflow: hidden !important;
+        position: relative;
+        width: 100% !important;
+    }
+
+    .homepage-product-card .homepage-product-image-frame > img.product-card-image {
+        aspect-ratio: auto !important;
+        display: block !important;
+        height: 100% !important;
+        max-height: none !important;
+        min-height: 0 !important;
+        object-fit: cover !important;
+        object-position: center !important;
+        width: 100% !important;
+    }
+
+    .homepage-product-card .product-card-body {
+        display: flex !important;
+        flex: 1 1 auto !important;
+        flex-direction: column !important;
+    }
+
+    .homepage-product-card .product-card-footer {
+        margin-top: auto !important;
+    }
+
+    @media (max-width: 768px) {
+        .homepage-product-card .homepage-product-image-frame {
+            flex-basis: 220px !important;
+            height: 220px !important;
+            max-height: 220px !important;
+            min-height: 220px !important;
+        }
+    }
+
+    @media (max-width: 575.98px) {
+        .homepage-product-card .product-card-media {
+            padding: 0.75rem 0.75rem 0;
+        }
+
+        .homepage-product-card .homepage-product-image-frame {
+            flex-basis: 210px !important;
+            height: 210px !important;
+            max-height: 210px !important;
+            min-height: 210px !important;
+        }
+
+        .homepage-product-card .product-card-body {
+            padding: 1rem;
+        }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<section class="hero-section pt-5 pb-0">
+    <div class="container pt-4 pb-0">
+        <div class="row align-items-center g-4">
+            <div class="col-lg-6">
+                <span class="badge homepage-section-badge bg-gold-pink text-white mb-3">
+                    <i class="fas fa-sparkles me-1"></i> Rule-Based Smart Suggestions
+                </span>
+                <h1 class="display-4 fw-bold mb-3">
+                    Sweet Moments, <span class="text-gold-pink">Matched to Your Celebration</span>
+                </h1>
+                <p class="lead mb-4">
+                    Browse live cakes and event packages with recommendations generated from previous orders, repeat preferences, and current best-selling items.
+                </p>
+                <div class="d-flex flex-wrap gap-3 mb-4">
+                    <a href="{% url 'cakes' %}" class="btn btn-gold btn-lg">
+                        <i class="fas fa-birthday-cake me-2"></i>Order a Cake
+                    </a>
+                    <a href="{% url 'packages' %}" class="btn btn-outline-gold btn-lg">
+                        <i class="fas fa-gift me-2"></i>Order the Package
+                    </a>
+                </div>
+                <div class="row g-3">
+                    {% for stat in hero_stats %}
+                    <div class="col-sm-6 col-lg-3">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body py-3">
+                                <h3 class="text-gold-pink mb-1">{{ stat.value }}</h3>
+                                <small class="text-muted text-uppercase">{{ stat.label }}</small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="col-lg-6 hero-collage-column">
+                <div class="hero-collage-shell">
+                    <div class="hero-collage-accent hero-collage-accent-top"></div>
+                    <div class="hero-collage-accent hero-collage-accent-bottom"></div>
+                    {% if hero_collage_images %}
+                    <div class="hero-collage-grid hero-collage-count-{{ hero_collage_images|length }}">
+                        {% for hero_image in hero_collage_images %}
+                        <figure class="hero-collage-card hero-collage-card-{{ forloop.counter }}">
+                            <img src="{{ hero_image.image_url }}" class="hero-collage-image" alt="{{ hero_image.title }}">
+                            <button type="button" class="image-zoom-trigger hero-collage-zoom" data-zoom-src="{{ hero_image.image_url }}" data-zoom-title="{{ hero_image.title }}" data-zoom-gallery="home-hero-collage">
+                                <i class="fas fa-search-plus"></i>
+                                <span>Zoom</span>
+                            </button>
+                        </figure>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="hero-collage-empty">
+                        <span class="hero-collage-kicker">Celebration Gallery</span>
+                        <h3>Elegant moments designed for birthdays, weddings, and milestone parties.</h3>
+                        <p>Fresh cakes, polished tablescapes, and soft pink-and-gold details set the tone for every celebration.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="testimonials-section">
+    <div class="container">
+        <div class="text-center mb-5">
+            <span class="badge homepage-section-badge bg-gold-pink text-white mb-2">
+                <i class="fas fa-heart me-1"></i> Customer Testimonials
+            </span>
+            <h2 class="mb-2">What Our Customers Say</h2>
+            <p class="text-muted mb-0">Celebrations become easier when the cake, package, and service all arrive the way customers expect.</p>
+        </div>
+
+        <div class="row g-4">
+            {% if homepage_testimonials %}
+                {% for testimonial in homepage_testimonials %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="testimonial-card card border-0 shadow-sm h-100">
+                        <div class="card-body p-4">
+                            <div class="testimonial-stars mb-3">
+                                {% for _ in testimonial.star_range %}
+                                <i class="fas fa-star"></i>
+                                {% endfor %}
+                            </div>
+                            <p class="testimonial-quote mb-4">{{ testimonial.message }}</p>
+                            <div class="testimonial-author">
+                                <strong>{{ testimonial.display_name }}</strong>
+                                <span>{{ testimonial.display_context }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="col-md-6 col-lg-4">
+                    <div class="testimonial-card card border-0 shadow-sm h-100">
+                        <div class="card-body p-4">
+                            <div class="testimonial-stars mb-3">
+                                <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i>
+                            </div>
+                            <p class="testimonial-quote mb-4">The cake looked exactly like the peg we sent, and the ordering steps were easy to follow from start to finish.</p>
+                            <div class="testimonial-author">
+                                <strong>Marian T.</strong>
+                                <span>Birthday Celebration</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="testimonial-card card border-0 shadow-sm h-100">
+                        <div class="card-body p-4">
+                            <div class="testimonial-stars mb-3">
+                                <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i>
+                            </div>
+                            <p class="testimonial-quote mb-4">We booked a package for our family party, and everything from the add-ons to the cake setup felt organized and on time.</p>
+                            <div class="testimonial-author">
+                                <strong>Jessa R.</strong>
+                                <span>Family Event Package</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="testimonial-card card border-0 shadow-sm h-100">
+                        <div class="card-body p-4">
+                            <div class="testimonial-stars mb-3">
+                                <i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="fas fa-star"></i>
+                            </div>
+                            <p class="testimonial-quote mb-4">The shop was responsive, the payment instructions were clear, and the final order matched the event theme beautifully.</p>
+                            <div class="testimonial-author">
+                                <strong>Angela P.</strong>
+                                <span>Customized Cake Order</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{% if home_strip_image %}
+<section class="home-strip-section pb-5">
+    <div class="container">
+        <div class="home-strip-frame image-zoom-frame">
+            <img src="{{ home_strip_image.image_url }}" class="home-strip-image" alt="{{ home_strip_image.title }}">
+            <button type="button" class="image-zoom-trigger home-strip-zoom" data-zoom-src="{{ home_strip_image.image_url }}" data-zoom-title="{{ home_strip_image.title }}" data-zoom-gallery="home-strip-image">
+                <i class="fas fa-search-plus"></i>
+                <span>View Image</span>
+            </button>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="py-5 bg-light">
+    <div class="container">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+            <div>
+                <span class="badge homepage-section-badge bg-gold-pink text-white mb-2">
+                    <i class="fas fa-robot me-1"></i> Personalized Recommendations
+                </span>
+                <h2 class="mb-1">{{ recommendation_headline }}</h2>
+                <p class="text-muted mb-0">{{ recommendation_subheadline }}</p>
+            </div>
+            {% if recommendation_profile.has_history %}
+            <a href="{% url 'order_tracking' %}" class="btn btn-outline-gold">
+                <i class="fas fa-history me-2"></i>Review Order History
+            </a>
+            {% endif %}
+        </div>
+
+        <div class="row g-4 align-items-stretch mb-4">
+            {% for item in recommended_cakes %}
+            <div class="col-lg-4 d-flex">
+                <div class="card product-card homepage-product-card h-100 border-0 shadow-sm overflow-hidden">
+                    <div class="product-card-media">
+                        <div class="position-relative image-zoom-frame homepage-product-image-frame">
+                            <img src="{{ item.image_url }}" class="product-card-image" alt="{{ item.name }}">
+                            <span class="badge bg-dark position-absolute top-0 start-0 m-3">{{ item.match_score }}% Match</span>
+                            <span class="badge bg-gold-pink position-absolute top-0 end-0 m-3">{{ item.badge }}</span>
+                            <button type="button" class="image-zoom-trigger" data-zoom-src="{{ item.image_url }}" data-zoom-title="{{ item.name }}" data-zoom-gallery="home-recommended-cakes">
+                                <i class="fas fa-search-plus"></i> Zoom
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body product-card-body d-flex flex-column">
+                        <div class="product-card-heading">
+                            <div>
+                                <h5 class="product-card-title">{{ item.name }}</h5>
+                                <div class="product-card-meta">{{ item.subtitle }}</div>
+                            </div>
+                            <div class="product-card-price">P{{ item.price|floatformat:2 }}</div>
+                        </div>
+                        {% with details=item.description|product_details %}
+                        {% if details %}
+                        <div class="product-detail-list mb-3">
+                            {% for detail in details %}
+                            <div class="product-detail-row"><span class="product-detail-label">{{ detail.label }}:</span> {{ detail.value }}</div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="product-card-description">{{ item.description|truncatechars:110 }}</p>
+                        {% endif %}
+                        {% endwith %}
+                        <div class="product-card-note"><strong>Why this is suggested:</strong> {{ item.reason }}</div>
+                        <div class="product-card-footer">
+                            <a href="{{ item.url }}" class="btn btn-gold w-100">Customize This Cake</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="row g-4">
+            {% for insight in home_insights %}
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex gap-3 align-items-start">
+                        <div class="text-gold-pink fs-4 mt-1">
+                            <i class="{{ insight.icon }}"></i>
+                        </div>
+                        <div>
+                            <small class="text-gold-pink text-uppercase">{{ insight.label }}</small>
+                            <h5 class="mb-1">{{ insight.title }}</h5>
+                            <p class="text-muted mb-0">{{ insight.detail }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="py-5">
+    <div class="container">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+            <div>
+                <span class="badge homepage-section-badge bg-gold-pink text-white mb-2">
+                    <i class="fas fa-gift me-1"></i> Suggested Event Packages
+                </span>
+                <h2 class="mb-1">Package Matches for Upcoming Events</h2>
+                <p class="text-muted mb-0">Package recommendations use your event history first, then current order trends.</p>
+            </div>
+            <a href="{% url 'packages' %}" class="btn btn-outline-gold">Browse All Packages</a>
+        </div>
+
+        <div class="row g-4 align-items-stretch">
+            {% for item in recommended_packages %}
+            <div class="col-lg-4 d-flex">
+                <div class="card product-card homepage-product-card h-100 border-0 shadow-sm overflow-hidden">
+                    <div class="product-card-media">
+                        <div class="position-relative image-zoom-frame homepage-product-image-frame">
+                            <img src="{{ item.image_url }}" class="product-card-image" alt="{{ item.name }}">
+                            <span class="badge bg-dark position-absolute top-0 start-0 m-3">{{ item.match_score }}% Match</span>
+                            <span class="badge bg-gold-pink position-absolute top-0 end-0 m-3">{{ item.badge }}</span>
+                            <button type="button" class="image-zoom-trigger" data-zoom-src="{{ item.image_url }}" data-zoom-title="{{ item.name }}" data-zoom-gallery="home-recommended-packages">
+                                <i class="fas fa-search-plus"></i> Zoom
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body product-card-body d-flex flex-column">
+                        <div class="product-card-heading">
+                            <div>
+                                <h5 class="product-card-title">{{ item.name }}</h5>
+                                <div class="product-card-meta">{{ item.subtitle }}</div>
+                            </div>
+                            <div class="product-card-price">P{{ item.price|floatformat:2 }}</div>
+                        </div>
+                        {% with highlights=item|package_highlights %}
+                        {% if highlights %}
+                        <div class="package-highlight-grid" aria-label="Package highlights">
+                            {% for highlight in highlights %}
+                            <div class="package-highlight-item">
+                                <span class="package-highlight-label">{{ highlight.label }}</span>
+                                <span class="package-highlight-value">{{ highlight.value }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="product-card-description">{{ item.description|truncatechars:110 }}</p>
+                        {% endif %}
+                        {% endwith %}
+                        <div class="product-card-note"><strong>Why this is suggested:</strong> {{ item.reason }}</div>
+                        <div class="product-card-footer">
+                            <a href="{{ item.url }}" class="btn btn-gold w-100">Order the Package</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="py-5 bg-light">
+    <div class="container">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-4">
+            <div>
+                <span class="badge homepage-section-badge bg-gold-pink text-white mb-2">
+                    <i class="fas fa-star me-1"></i> Live Best Sellers
+                </span>
+                <h2 class="mb-1">Top Cakes and Packages Right Now</h2>
+                <p class="text-muted mb-0">These sections are fully driven by the current database, not hardcoded marketing content.</p>
+            </div>
+        </div>
+
+        <div class="row g-4 align-items-stretch mb-5">
+            {% for cake in featured_cakes %}
+            <div class="col-md-6 col-lg-3 d-flex">
+                <div class="card product-card homepage-product-card h-100 border-0 shadow-sm overflow-hidden">
+                    <div class="product-card-media">
+                        <div class="image-zoom-frame homepage-product-image-frame">
+                            <img src="{{ cake.image_url }}" class="product-card-image" alt="{{ cake.name }}">
+                            <button type="button" class="image-zoom-trigger" data-zoom-src="{{ cake.image_url }}" data-zoom-title="{{ cake.name }}" data-zoom-gallery="home-featured-cakes">
+                                <i class="fas fa-search-plus"></i> Zoom
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body product-card-body d-flex flex-column">
+                        <div class="product-card-heading">
+                            <div>
+                                <h5 class="product-card-title">{{ cake.name }}</h5>
+                                <div class="product-card-meta">{{ cake.get_category_display }}</div>
+                            </div>
+                            <div class="product-card-price">P{{ cake.price|floatformat:2 }}</div>
+                        </div>
+                        {% with details=cake.description|product_details %}
+                        {% if details %}
+                        <div class="product-detail-list mb-3">
+                            {% for detail in details %}
+                            <div class="product-detail-row"><span class="product-detail-label">{{ detail.label }}:</span> {{ detail.value }}</div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="product-card-description">{{ cake.description|default:'Made to order for your next celebration.'|truncatechars:90 }}</p>
+                        {% endif %}
+                        {% endwith %}
+                        <div class="product-card-note">{{ cake.order_count }} order(s)</div>
+                        <div class="product-card-footer">
+                            <a href="{% url 'cake_customize' %}?cake_id={{ cake.id }}" class="btn btn-sm btn-outline-gold w-100">Order</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="row g-4 align-items-stretch">
+            {% for package in featured_packages %}
+            <div class="col-lg-4 d-flex">
+                <div class="card product-card homepage-product-card h-100 border-0 shadow-sm overflow-hidden">
+                    <div class="product-card-media">
+                        <div class="image-zoom-frame homepage-product-image-frame">
+                            <img src="{% if package.image %}{{ package.image.url }}{% else %}{% static 'images/bg.png' %}{% endif %}" class="product-card-image" alt="{{ package.name }}">
+                            <button type="button" class="image-zoom-trigger" data-zoom-src="{% if package.image %}{{ package.image.url }}{% else %}{% static 'images/bg.png' %}{% endif %}" data-zoom-title="{{ package.name }}" data-zoom-gallery="home-featured-packages">
+                                <i class="fas fa-search-plus"></i> Zoom
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body product-card-body d-flex flex-column">
+                        <div class="product-card-heading">
+                            <div>
+                                <h5 class="product-card-title">{{ package.name }}</h5>
+                                <div class="product-card-meta">{{ package.get_package_type_display }}</div>
+                            </div>
+                            <div class="product-card-price">P{{ package.base_price|floatformat:2 }}</div>
+                        </div>
+                        {% with highlights=package|package_highlights inclusions=package|package_inclusions %}
+                        {% if highlights %}
+                        <div class="package-highlight-grid" aria-label="Package highlights">
+                            {% for highlight in highlights %}
+                            <div class="package-highlight-item">
+                                <span class="package-highlight-label">{{ highlight.label }}</span>
+                                <span class="package-highlight-value">{{ highlight.value }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="product-card-description">{{ package.description|default:'Celebration package with cake, styling, and party extras.'|truncatechars:120 }}</p>
+                        {% endif %}
+                        {% if inclusions %}
+                        <div class="package-inclusion-preview small">
+                            <div class="fw-semibold text-dark mb-2">Package Preview</div>
+                            <div class="package-inclusion-preview-list">
+                                {% for item in inclusions|slice:":3" %}
+                                <div class="package-inclusion-preview-item">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>{{ item.display_label }}</span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <button type="button" class="package-details-link" data-bs-toggle="modal" data-bs-target="#featuredPackageDetailsModal{{ package.id }}">
+                                {% with hidden_count=inclusions|remaining_count:3 %}{% if hidden_count %}+ {{ hidden_count }} more inclusions{% else %}View Details{% endif %}{% endwith %}
+                            </button>
+                        </div>
+                        {% else %}
+                        <button type="button" class="package-details-link mb-3" data-bs-toggle="modal" data-bs-target="#featuredPackageDetailsModal{{ package.id }}">View Details</button>
+                        {% endif %}
+                        {% endwith %}
+                        <div class="product-card-note">{{ package.order_count }} order(s)</div>
+                        <div class="product-card-footer">
+                            <a href="{% url 'order_package' %}?package_id={{ package.id }}" class="btn btn-sm btn-outline-gold w-100">Order</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal fade" id="featuredPackageDetailsModal{{ package.id }}" tabindex="-1" aria-labelledby="featuredPackageDetailsModalLabel{{ package.id }}" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content border-0 shadow">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="featuredPackageDetailsModalLabel{{ package.id }}">{{ package.name }}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-4">
+                                <h6 class="fw-bold mb-2">Package Description</h6>
+                                <p class="package-details-description mb-0">{{ package.description|default:'Celebration package with cake, styling, and party extras.' }}</p>
+                            </div>
+                            {% with inclusions=package|package_inclusions %}
+                            {% if inclusions %}
+                            <div>
+                                <h6 class="fw-bold mb-2">All Inclusions</h6>
+                                <div class="package-included-list">
+                                    {% for item in inclusions %}
+                                    <div class="package-included-list-item">
+                                        {% if item.image_url %}
+                                        <div class="package-included-list-thumb">
+                                            <img src="{{ item.image_url }}" alt="{{ item.display_label }}">
+                                        </div>
+                                        {% endif %}
+                                        <div>{{ item.display_label }}</div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% endwith %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="cta-section py-5">
+    <div class="container-fluid px-4">
+        <div class="card border-0 bg-gold-pink">
+            <div class="card-body text-center p-5">
+                <h2 class="text-white mb-3">Ready to turn these suggestions into an order?</h2>
+                <p class="text-white mb-4 fs-5">Your homepage is now using live order signals to recommend what to customize or order next.</p>
+                <div class="d-flex justify-content-center flex-wrap gap-3">
+                    <a href="{% url 'cakes' %}" class="btn btn-gold btn-lg px-4">
+                        <i class="fas fa-birthday-cake me-2"></i>Shop Cakes
+                    </a>
+                    <a href="{% url 'packages' %}" class="btn btn-outline-light btn-lg px-4">
+                        <i class="fas fa-gift me-2"></i>Shop Packages
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

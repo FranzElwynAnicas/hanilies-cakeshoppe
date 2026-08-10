@@ -1,0 +1,1488 @@
+{% extends "admin/base_admin.html" %}
+{% load static %}
+
+{% block title %}Admin Dashboard{% endblock %}
+{% block page_title %}Admin Dashboard{% endblock %}
+{% block page_icon %}house{% endblock %}
+
+{% block extra_css %}
+<style>
+    .page-title i {
+        font-size: 1.3em;
+    }
+
+    .dashboard-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .dashboard-hero {
+        position: relative;
+        overflow: hidden;
+        min-height: 118px;
+        padding: 20px 22px;
+        border-radius: 24px;
+        background: linear-gradient(135deg, #f857a6 0%, #f09363 55%, #d4af37 100%);
+        box-shadow: 0 16px 32px rgba(248, 87, 166, 0.16);
+    }
+
+    .dashboard-hero::before,
+    .dashboard-hero::after {
+        content: '';
+        position: absolute;
+        pointer-events: none;
+        border-radius: 999px;
+    }
+
+    .dashboard-hero::before {
+        top: -58px;
+        right: -34px;
+        width: 200px;
+        height: 200px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 68%);
+    }
+
+    .dashboard-hero::after {
+        bottom: -84px;
+        left: 22%;
+        width: 180px;
+        height: 180px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 72%);
+    }
+
+    .dashboard-hero-grid {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(290px, 0.95fr);
+        gap: 16px;
+        align-items: stretch;
+    }
+
+    .dashboard-hero-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .dashboard-hero h2 {
+        margin: 0;
+        color: #2b0f18;
+        font-size: clamp(2.1rem, 2.8vw, 2.65rem);
+        line-height: 1.02;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+        text-shadow: none;
+    }
+
+    .dashboard-hero h2 i {
+        margin-right: 10px;
+    }
+
+    .dashboard-hero-subtitle {
+        margin: 0;
+        max-width: 640px;
+        color: #4a2432;
+        font-size: 0.97rem;
+        line-height: 1.55;
+        font-weight: 600;
+    }
+
+    .dashboard-hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 2px;
+    }
+
+    .dashboard-hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #3b1a24;
+        font-size: 0.88rem;
+        font-weight: 700;
+        line-height: 1.2;
+        backdrop-filter: blur(6px);
+    }
+
+    .dashboard-hero-pill.is-live {
+        background: rgba(220, 252, 231, 0.6);
+        border-color: rgba(22, 163, 74, 0.24);
+        color: #166534;
+    }
+
+    .dashboard-hero-summary {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        align-self: stretch;
+    }
+
+    .dashboard-hero-mini {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 84px;
+        padding: 14px 15px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(8px);
+    }
+
+    .dashboard-hero-mini span {
+        display: block;
+        color: #5a2a1a;
+        font-size: 0.76rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+
+    .dashboard-hero-mini strong {
+        display: block;
+        margin-top: 8px;
+        color: #2b0f18;
+        font-size: 1.55rem;
+        line-height: 1.02;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+    }
+
+    .dashboard-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .dashboard-section-title {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+    }
+
+    .dashboard-section-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+        color: #db2777;
+        font-size: 0.8rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .dashboard-section-title h3 {
+        margin: 0;
+        color: #111827;
+        font-size: 1.32rem;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+    }
+
+    .dashboard-section-title p {
+        margin: 6px 0 0;
+        color: #4b5563;
+        font-size: 0.92rem;
+        font-weight: 500;
+        line-height: 1.5;
+        max-width: 720px;
+    }
+
+    .kpi-grid-primary,
+    .kpi-grid-secondary {
+        display: grid;
+        gap: 14px;
+    }
+
+    .kpi-grid-primary {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .kpi-grid-secondary {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .stat-card {
+        position: relative;
+        overflow: hidden;
+        display: block;
+        padding: 16px 16px 15px;
+        border-radius: 18px;
+        background: #ffffff;
+        border: 1px solid #eef0f4;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+        text-decoration: none;
+        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+        cursor: pointer;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 16px 28px rgba(15, 23, 42, 0.1);
+        border-color: #f3d7e4;
+    }
+
+    .stat-card::before,
+    .stat-card::after {
+        content: '';
+        position: absolute;
+        pointer-events: none;
+    }
+
+    .stat-card::before {
+        inset: 0 0 auto 0;
+        height: 4px;
+        background: #f59e0b;
+    }
+
+    .stat-card::after {
+        top: 14px;
+        left: 0;
+        width: 4px;
+        height: calc(100% - 28px);
+        border-radius: 0 999px 999px 0;
+        background: #f59e0b;
+    }
+
+    .stat-card.is-critical::before,
+    .stat-card.is-critical::after {
+        background: #dc2626;
+    }
+
+    .stat-card.is-sales::before,
+    .stat-card.is-sales::after {
+        background: #16a34a;
+    }
+
+    .stat-card.is-orders::before,
+    .stat-card.is-orders::after {
+        background: #2563eb;
+    }
+
+    .stat-card.is-catalog::before,
+    .stat-card.is-catalog::after {
+        background: #f59e0b;
+    }
+
+    .stat-card.is-users::before,
+    .stat-card.is-users::after {
+        background: #7c3aed;
+    }
+    .stat-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .stat-card-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .stat-label {
+        margin: 0;
+        color: #4b5563;
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+    }
+
+    .stat-icon-wrapper {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        background: rgba(245, 158, 11, 0.12);
+        color: #b45309;
+    }
+
+    .stat-card.is-critical .stat-icon-wrapper {
+        background: rgba(220, 38, 38, 0.12);
+        color: #dc2626;
+    }
+
+    .stat-card.is-sales .stat-icon-wrapper {
+        background: rgba(22, 163, 74, 0.12);
+        color: #15803d;
+    }
+
+    .stat-card.is-orders .stat-icon-wrapper {
+        background: rgba(37, 99, 235, 0.12);
+        color: #1d4ed8;
+    }
+
+    .stat-card.is-catalog .stat-icon-wrapper {
+        background: rgba(245, 158, 11, 0.12);
+        color: #b45309;
+    }
+
+    .stat-card.is-users .stat-icon-wrapper {
+        background: rgba(124, 58, 237, 0.12);
+        color: #7c3aed;
+    }
+
+    .stat-icon-wrapper i {
+        font-size: 1.25rem;
+    }
+
+    .stat-card-value {
+        color: #111827;
+        font-size: clamp(1.9rem, 2vw, 2.3rem);
+        line-height: 1.02;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+    }
+
+    .stat-copy {
+        color: #4b5563;
+        font-size: 0.87rem;
+        font-weight: 500;
+        line-height: 1.45;
+        min-height: 38px;
+    }
+
+    .stat-progress {
+        height: 6px;
+        border-radius: 999px;
+        background: #f3f4f6;
+        overflow: hidden;
+    }
+
+    .stat-progress span {
+        display: block;
+        height: 100%;
+        width: 72%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgba(245, 158, 11, 0.9), rgba(251, 191, 36, 0.92));
+    }
+
+    .stat-card.is-critical .stat-progress span {
+        width: 46%;
+        background: linear-gradient(90deg, #ef4444, #f97316);
+    }
+
+    .stat-card.is-sales .stat-progress span {
+        width: 88%;
+        background: linear-gradient(90deg, #16a34a, #4ade80);
+    }
+
+    .stat-card.is-orders .stat-progress span {
+        width: 74%;
+        background: linear-gradient(90deg, #2563eb, #60a5fa);
+    }
+
+    .stat-card.is-catalog .stat-progress span {
+        width: 64%;
+        background: linear-gradient(90deg, #f59e0b, #fbbf24);
+    }
+
+    .stat-card.is-users .stat-progress span {
+        width: 58%;
+        background: linear-gradient(90deg, #7c3aed, #a78bfa);
+    }
+
+    .stat-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: #6b7280;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .stat-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #475569;
+        font-size: 0.75rem;
+        font-weight: 800;
+    }
+
+    .stat-chip.negative {
+        background: #fff1f2;
+        color: #be123c;
+    }
+
+    .dashboard-secondary-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.95fr);
+        gap: 16px;
+    }
+
+    .dashboard-panel {
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 18px;
+        border: 1px solid #eef0f4;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .dashboard-panel h3 {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 6px;
+        color: #111827;
+        font-size: 1.18rem;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+    }
+
+    .dashboard-panel-copy {
+        margin: 0 0 16px;
+        color: #4b5563;
+        font-size: 0.9rem;
+        font-weight: 500;
+        line-height: 1.45;
+    }
+
+    .quick-action-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .quick-action-card {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 16px;
+        border-radius: 16px;
+        background: linear-gradient(180deg, #ffffff, #fff8fb);
+        border: 1px solid #f3d7e4;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+        color: #111827;
+        text-decoration: none;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .quick-action-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 14px 24px rgba(248, 87, 166, 0.12);
+        border-color: #f7c6d8;
+        color: #111827;
+    }
+
+    .quick-action-card.is-priority {
+        background: linear-gradient(135deg, #fff1f2, #fff7ed);
+        border-color: #fecdd3;
+    }
+
+    .quick-action-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(248, 87, 166, 0.1);
+        color: #ec4899;
+        flex-shrink: 0;
+    }
+
+    .quick-action-card.is-priority .quick-action-icon {
+        background: rgba(249, 115, 22, 0.12);
+        color: #ea580c;
+    }
+
+    .quick-action-icon i {
+        font-size: 1.15rem;
+    }
+
+    .quick-action-content {
+        min-width: 0;
+    }
+
+    .quick-action-content strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #111827;
+        font-size: 0.95rem;
+        font-weight: 800;
+    }
+
+    .quick-action-content span {
+        display: block;
+        color: #4b5563;
+        font-size: 0.84rem;
+        font-weight: 500;
+        line-height: 1.4;
+    }
+
+    .quick-action-arrow {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.82);
+        color: #db2777;
+        box-shadow: inset 0 0 0 1px rgba(236, 72, 153, 0.14);
+    }
+    .attention-list {
+        display: grid;
+        gap: 10px;
+    }
+
+    .attention-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 14px 14px 16px;
+        border-radius: 16px;
+        background: linear-gradient(180deg, #fff9fb, #ffffff);
+        border-left: 4px solid #f59e0b;
+        box-shadow: inset 0 0 0 1px #f6e7ee;
+        text-decoration: none;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .attention-item:hover {
+        transform: translateX(2px);
+        box-shadow: inset 0 0 0 1px #f1c8d8, 0 8px 18px rgba(15, 23, 42, 0.06);
+    }
+
+    .attention-item.is-urgent {
+        border-left-color: #dc2626;
+    }
+
+    .attention-item-icon {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(245, 158, 11, 0.12);
+        color: #b45309;
+        flex-shrink: 0;
+    }
+
+    .attention-item.is-urgent .attention-item-icon {
+        background: rgba(220, 38, 38, 0.12);
+        color: #dc2626;
+    }
+
+    .attention-item-main {
+        min-width: 0;
+    }
+
+    .attention-item-main strong {
+        display: block;
+        margin-bottom: 3px;
+        color: #111827;
+        font-size: 0.94rem;
+        font-weight: 800;
+    }
+
+    .attention-item-main span {
+        color: #4b5563;
+        font-size: 0.83rem;
+        font-weight: 500;
+        line-height: 1.4;
+    }
+
+    .attention-item-value {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 48px;
+        height: 36px;
+        padding: 0 12px;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #be185d;
+        font-size: 0.85rem;
+        font-weight: 900;
+        box-shadow: inset 0 0 0 1px #f3d7e4;
+    }
+
+    .dashboard-data-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+        gap: 16px;
+    }
+
+    .module-card {
+        margin: 0;
+        background: #ffffff;
+        border-radius: 18px;
+        overflow: hidden;
+        border: 1px solid #eef0f4;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .module-card.full-span {
+        grid-column: 1 / -1;
+    }
+
+    .module-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid #f2dde7;
+        background: linear-gradient(180deg, #ffffff, #fff9fb);
+    }
+
+    .module-header h2 {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        color: #111827;
+        font-size: 1.08rem;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+    }
+
+    .module-header h2 i {
+        color: #ec4899;
+    }
+
+    .view-all-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #db2777;
+        text-decoration: none;
+        font-size: 0.82rem;
+        font-weight: 800;
+    }
+
+    .view-all-link:hover {
+        text-decoration: underline;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .module-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .module-table th {
+        padding: 13px 16px;
+        background: #fff7fa;
+        border-bottom: 1px solid #f4d9e5;
+        color: #be185d;
+        font-size: 0.74rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        text-align: left;
+        white-space: nowrap;
+    }
+
+    .module-table td {
+        padding: 15px 16px;
+        border-bottom: 1px solid #f2f4f7;
+        color: #374151;
+        font-size: 0.9rem;
+        font-weight: 500;
+        vertical-align: top;
+        background: #ffffff;
+    }
+
+    .module-table tbody tr {
+        transition: background-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .module-table tbody tr:hover td {
+        background: linear-gradient(135deg, #fff8fb, #fffdf8);
+    }
+
+    .cell-strong {
+        color: #111827;
+        font-weight: 800;
+    }
+
+    .cell-muted {
+        color: #4b5563;
+        font-size: 0.83rem;
+        font-weight: 500;
+    }
+
+    .cell-truncate {
+        max-width: 280px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .product-summary-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .product-code-badge {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-size: 0.72rem;
+        font-weight: 800;
+    }
+
+    .order-sales-helper {
+        color: #4b5563;
+        font-size: 0.83rem;
+        font-weight: 500;
+        line-height: 1.45;
+    }
+
+    .report-link {
+        color: #1d4ed8;
+        font-weight: 700;
+        text-decoration: none;
+    }
+
+    .report-link:hover {
+        text-decoration: underline;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 11px;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+    .status-pending,
+    .status-payment_retry {
+        background: #fff3e0;
+        color: #b45309;
+    }
+
+    .status-confirmed,
+    .status-out_for_delivery,
+    .status-preparing {
+        background: #e0f2fe;
+        color: #0369a1;
+    }
+
+    .status-delivered,
+    .status-paid,
+    .status-completed {
+        background: #dcfce7;
+        color: #15803d;
+    }
+
+    .status-cancelled,
+    .status-rejected {
+        background: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .audit-mini-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: #f3f4f6;
+        color: #374151;
+        font-size: 0.72rem;
+        font-weight: 800;
+    }
+
+    .audit-mini-badge.login {
+        background: #ccfbf1;
+        color: #0f766e;
+    }
+
+    .audit-mini-badge.logout {
+        background: #ede9fe;
+        color: #6d28d9;
+    }
+
+    .audit-mini-badge.update {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .audit-mini-badge.archive,
+    .audit-mini-badge.delete {
+        background: #ffe4e6;
+        color: #9f1239;
+    }
+
+    .audit-mini-badge.create {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .table-footer-note {
+        padding: 12px 16px 15px;
+        color: #4b5563;
+        font-size: 0.82rem;
+        font-weight: 500;
+        line-height: 1.45;
+        background: linear-gradient(180deg, #ffffff, #fffafb);
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 34px 18px;
+    }
+
+    .empty-state i {
+        display: block;
+        margin-bottom: 10px;
+        color: #e5e7eb;
+        font-size: 2.2rem;
+    }
+
+    .empty-state p {
+        margin: 0;
+        color: #6b7280;
+        font-weight: 600;
+    }
+
+    @media (max-width: 1440px) {
+        .kpi-grid-primary {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .kpi-grid-secondary {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .quick-action-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 1199px) {
+        .dashboard-hero-grid,
+        .dashboard-secondary-grid,
+        .dashboard-data-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .dashboard-hero-summary {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 991px) {
+        .kpi-grid-secondary {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .quick-action-grid {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .dashboard-hero-summary {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 767px) {
+        .dashboard-shell {
+            gap: 15px;
+        }
+
+        .dashboard-hero {
+            padding: 16px 16px 18px;
+            min-height: 0;
+            border-radius: 20px;
+        }
+
+        .dashboard-hero-grid {
+            gap: 14px;
+        }
+
+        .dashboard-hero-copy {
+            gap: 8px;
+        }
+
+        .dashboard-hero h2 {
+            font-size: 1.68rem;
+            line-height: 1.08;
+        }
+
+        .dashboard-hero-subtitle {
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .dashboard-hero-meta {
+            gap: 8px;
+        }
+
+        .dashboard-hero-pill {
+            width: 100%;
+            min-width: 0;
+            justify-content: flex-start;
+            padding: 9px 11px;
+            font-size: 0.82rem;
+        }
+
+        .dashboard-hero-summary {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .dashboard-hero-mini {
+            min-height: 72px;
+            padding: 12px 13px;
+        }
+
+        .dashboard-hero-mini strong {
+            font-size: 1.3rem;
+        }
+
+        .dashboard-section-title {
+            gap: 10px;
+        }
+
+        .dashboard-section-title h3 {
+            font-size: 1.14rem;
+        }
+
+        .dashboard-section-title p,
+        .dashboard-panel-copy {
+            font-size: 0.87rem;
+        }
+
+        .kpi-grid-primary,
+        .kpi-grid-secondary,
+        .quick-action-grid,
+        .dashboard-data-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .stat-card {
+            padding: 14px 14px 13px;
+        }
+
+        .stat-card-value {
+            font-size: 1.72rem;
+        }
+
+        .quick-action-card,
+        .attention-item {
+            grid-template-columns: auto minmax(0, 1fr);
+            padding: 14px;
+        }
+
+        .quick-action-arrow,
+        .attention-item-value {
+            grid-column: 2;
+            justify-self: start;
+            margin-top: 4px;
+        }
+
+        .dashboard-panel,
+        .module-header {
+            padding: 14px;
+        }
+
+        .module-header {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+
+        .module-header h2 {
+            font-size: 1rem;
+        }
+
+        .view-all-link {
+            width: 100%;
+            justify-content: flex-start;
+        }
+
+        .module-table th,
+        .module-table td {
+            padding: 12px 13px;
+        }
+
+        .table-footer-note {
+            padding: 12px 14px 14px;
+        }
+
+        .cell-truncate {
+            max-width: none;
+            white-space: normal;
+        }
+    }
+
+    @media (max-width: 575px) {
+        .dashboard-hero-summary {
+            grid-template-columns: 1fr;
+        }
+
+        .dashboard-hero-mini strong {
+            font-size: 1.18rem;
+        }
+
+        .table-responsive {
+            overflow: visible;
+        }
+
+        .module-table,
+        .module-table thead,
+        .module-table tbody,
+        .module-table tr,
+        .module-table th,
+        .module-table td {
+            display: block;
+            width: 100%;
+        }
+
+        .module-table thead {
+            display: none;
+        }
+
+        .module-table tbody {
+            display: grid;
+            gap: 12px;
+            padding: 12px;
+        }
+
+        .module-table tbody tr {
+            display: block;
+            border: 1px solid #f3e2ea;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+        }
+
+        .module-table tbody td {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 10px 12px;
+            border-bottom: 1px solid #f8e6ef;
+            text-align: right;
+        }
+
+        .module-table tbody td::before {
+            content: attr(data-label);
+            flex: 0 0 110px;
+            color: #be185d;
+            font-size: 0.72rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-align: left;
+        }
+
+        .module-table tbody tr td:last-child {
+            border-bottom: 0;
+        }
+
+        .module-table tbody td > * {
+            text-align: right;
+        }
+
+        .module-table tbody td .cell-truncate {
+            text-align: right;
+        }
+
+        .cell-strong,
+        .cell-muted,
+        .status-badge,
+        .audit-mini-badge {
+            margin-left: auto;
+        }
+
+        .module-table tbody td.empty-state {
+            display: block;
+            text-align: center;
+            padding: 24px 16px;
+        }
+
+        .module-table tbody td.empty-state::before {
+            display: none;
+        }
+
+        .empty-state i {
+            margin-bottom: 8px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-shell">
+    <section class="dashboard-hero">
+        <div class="dashboard-hero-grid">
+            <div class="dashboard-hero-copy">
+                <h2><i class="fas fa-cake-candles"></i> Welcome back, {{ request.user.get_full_name|default:request.user.username }}!</h2>
+                <p class="dashboard-hero-subtitle">Manage today's cakeshoppe events operations and monitor business performance.</p>
+                <div class="dashboard-hero-meta">
+                    <span class="dashboard-hero-pill">
+                        <i class="fas fa-calendar-alt"></i>
+                        {{ now|date:"l, F j, Y" }}
+                    </span>
+                    <span class="dashboard-hero-pill">
+                        <i class="fas fa-user-shield"></i>
+                        {{ role_display }}
+                    </span>
+                    <span class="dashboard-hero-pill is-live">
+                        <i class="fas fa-circle"></i>
+                        {% if total_cakes or total_packages %}Storefront Live{% else %}Catalog Setup{% endif %}
+                    </span>
+                    {% if request.user.last_login %}
+                    <span class="dashboard-hero-pill">
+                        <i class="fas fa-clock"></i>
+                        Last Login {{ request.user.last_login|date:"M j, Y g:i A" }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="dashboard-hero-summary">
+                {% for item in hero_summary_items %}
+                <div class="dashboard-hero-mini">
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.value }}</strong>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section class="dashboard-stack">
+        <div class="dashboard-section-title">
+            <div>
+                <span class="dashboard-section-kicker"><i class="fas fa-fire"></i> Primary Metrics</span>
+                <h3>Priority Overview</h3>
+                <p>Track the most important hanilies cakeshoppe operations, revenue, catalog, and user metrics at a glance.</p>
+            </div>
+        </div>
+
+        <div class="kpi-grid-primary">
+            {% for card in priority_cards %}
+            <a href="{{ card.url }}" class="stat-card{% if card.title == 'Pending Payments' %} is-critical{% elif card.title == "Today's Sales" %} is-sales{% elif card.title == 'Cake Orders' or card.title == 'Package Orders' %} is-orders{% elif card.tone == 'sales' %} is-sales{% elif card.tone == 'urgent' %} is-critical{% endif %}" aria-label="{{ card.link_label|default:'Open card details' }}" title="{{ card.link_label|default:'Open card details' }}">
+                <div class="stat-card-body">
+                    <div class="stat-card-top">
+                        <div>
+                            <p class="stat-label">{{ card.title|safe }}</p>
+                        </div>
+                        <div class="stat-icon-wrapper"><i class="fas fa-{{ card.icon }}"></i></div>
+                    </div>
+                    <div class="stat-card-value">{{ card.value }}</div>
+                    <div class="stat-copy">{{ card.copy }}</div>
+                    <div class="stat-progress"><span></span></div>
+                    <div class="stat-foot">
+                        <span class="stat-chip {% if card.chip_negative %}negative{% endif %}"><i class="fas fa-arrow-trend-up"></i> {{ card.chip }}</span>
+                        <span>{{ card.link_label|default:'Open' }}</span>
+                    </div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+
+        <div class="dashboard-section-title">
+            <div>
+                <span class="dashboard-section-kicker"><i class="fas fa-box-open"></i> Secondary Metrics</span>
+                <h3>Supporting Totals</h3>
+                <p>Monitor revenue trend, catalog coverage, and user totals without competing with the primary action items.</p>
+            </div>
+        </div>
+
+        <div class="kpi-grid-secondary">
+            {% for card in secondary_cards %}
+            <a href="{{ card.url }}" class="stat-card{% if card.title == "This Week's Sales" or card.title == "This Month's Sales" %} is-sales{% elif card.title == 'Total Users' %} is-users{% elif card.title == 'Total Cake Products' or card.title == 'Total Package Products' %} is-catalog{% elif card.tone == 'sales' %} is-sales{% elif card.tone == 'neutral' %} is-catalog{% endif %}" aria-label="{{ card.link_label|default:'View supporting metric details' }}" title="{{ card.link_label|default:'View supporting metric details' }}">
+                <div class="stat-card-body">
+                    <div class="stat-card-top">
+                        <div>
+                            <p class="stat-label">{{ card.title|safe }}</p>
+                        </div>
+                        <div class="stat-icon-wrapper"><i class="fas fa-{{ card.icon }}"></i></div>
+                    </div>
+                    <div class="stat-card-value">{{ card.value }}</div>
+                    <div class="stat-progress"><span></span></div>
+                    <div class="stat-foot">
+                        <span class="stat-chip"><i class="fas fa-chart-simple"></i> {{ card.chip }}</span>
+                        <span>{{ card.link_label|default:'View' }}</span>
+                    </div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+
+
+    {% if stock_report_cards %}
+    <section class="dashboard-stack" id="stock-report">
+        <div class="dashboard-section-title">
+            <div>
+                <span class="dashboard-section-kicker"><i class="fas fa-boxes-stacked"></i> Inventory Overview</span>
+                <h3>Stock by Product ID</h3>
+                <p>Track cake and package product stock levels by product ID. Stock is deducted automatically when a deposit or full payment is approved and restored if the order returns to payment retry or is cancelled.</p>
+            </div>
+        </div>
+
+        <div class="kpi-grid-secondary">
+            {% for card in stock_report_cards %}
+            <a href="{{ card.url }}" class="stat-card{% if card.title == 'Needs Replenishment' or card.title == 'Out of Stock' %} is-critical{% else %} is-catalog{% endif %}">
+                <div class="stat-card-body">
+                    <div class="stat-card-top">
+                        <div><p class="stat-label">{{ card.title }}</p></div>
+                        <div class="stat-icon-wrapper"><i class="fas fa-{{ card.icon }}"></i></div>
+                    </div>
+                    <div class="stat-card-value">{{ card.value }}</div>
+                    <div class="stat-copy">{{ card.copy }}</div>
+                    <div class="stat-progress"><span></span></div>
+                    <div class="stat-foot">
+                        <span class="stat-chip"><i class="fas fa-warehouse"></i> {{ card.chip }}</span>
+                        <span>Open</span>
+                    </div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="dashboard-secondary-grid"> 
+        <div class="dashboard-panel">
+            <h3><i class="fas fa-bolt" style="color: #f59e0b;"></i> Quick Actions</h3>
+            <p class="dashboard-panel-copy">Jump into the most common bakery admin tasks with fewer clicks.</p>
+            <div class="quick-action-grid">
+                {% for action in quick_actions %}
+                <a href="{{ action.url }}" class="quick-action-card {% if action.priority %}is-priority{% endif %}">
+                    <div class="quick-action-icon"><i class="fas fa-{{ action.icon }}"></i></div>
+                    <div class="quick-action-content">
+                        <strong>{{ action.title }}</strong>
+                        <span>{{ action.copy }}</span>
+                    </div>
+                    <div class="quick-action-arrow"><i class="fas fa-arrow-right"></i></div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="dashboard-panel">
+            <h3><i class="fas fa-triangle-exclamation text-danger"></i> Needs Attention</h3>
+            <p class="dashboard-panel-copy">Review the items most likely to need a staff response next.</p>
+            <div class="attention-list">
+                {% for item in attention_items %}
+                <a href="{{ item.url }}" class="attention-item {% if item.urgent %}is-urgent{% endif %}">
+                    <div class="attention-item-icon">
+                        {% if item.title == 'Refund Requests' %}
+                        <i class="fas fa-rotate-left"></i>
+                        {% elif item.title == 'Cake Orders Requiring Action' %}
+                        <i class="fas fa-cake-candles"></i>
+                        {% elif item.title == 'Package Orders Requiring Action' %}
+                        <i class="fas fa-calendar-check"></i>
+                        {% elif item.title == 'Testimonials Pending Review' %}
+                        <i class="fas fa-comments"></i>
+                        {% else %}
+                        <i class="fas fa-credit-card"></i>
+                        {% endif %}
+                    </div>
+                    <div class="attention-item-main">
+                        <strong>{{ item.title }}</strong>
+                        <span>{{ item.copy }}</span>
+                    </div>
+                    <span class="attention-item-value">{{ item.value }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section class="dashboard-data-grid">
+        {% if can_view_audit_trail %}
+        <div class="module-card">
+            <div class="module-header">
+                <h2><i class="fas fa-clipboard-list"></i> Recent Audit Trail</h2>
+                <a href="{% url 'admin_activity_logs' %}" class="view-all-link">View All <i class="fas fa-arrow-right"></i></a>
+            </div>
+            <div class="table-responsive">
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>User</th>
+                            <th>Action</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in recent_activity_logs %}
+                        <tr>
+                            <td data-label="Date">{{ log.created_at|date:"M d, Y H:i" }}</td>
+                            <td data-label="User">
+                                <div class="cell-strong">{{ log.actor.username|default:"Deleted user" }}</div>
+                                <div class="cell-muted">{{ log.target_type|default:"General"|title }}</div>
+                            </td>
+                            <td data-label="Action">
+                                <span class="audit-mini-badge {% if 'login' in log.action|lower %}login{% elif 'logout' in log.action|lower %}logout{% elif 'update' in log.action|lower or 'approve' in log.action|lower or 'verify' in log.action|lower %}update{% elif 'archive' in log.action|lower or 'reject' in log.action|lower or 'delete' in log.action|lower %}archive{% elif 'create' in log.action|lower or 'add' in log.action|lower %}create{% endif %}">
+                                    {{ log.action|title }}
+                                </span>
+                            </td>
+                            <td data-label="Details">
+                                <div class="cell-truncate">{{ log.description }}</div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="empty-state">
+                                <i class="fas fa-clipboard-list"></i>
+                                <p>No audit trail entries yet</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="table-footer-note">Showing the latest {{ recent_activity_logs|length }} audit entries. Open the full audit trail for filters and archive tools.</div>
+        </div>
+        {% endif %}
+
+        {% if can_view_cake_orders %}
+        <div class="module-card">
+            <div class="module-header">
+                <h2><i class="fas fa-shopping-cart"></i> Recent Cake Orders</h2>
+                <a href="{% url 'admin_cake_orders' %}" class="view-all-link">View All <i class="fas fa-arrow-right"></i></a>
+            </div>
+            <div class="table-responsive">
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Customer</th>
+                            <th>Cake</th>
+                            <th>Total</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in recent_cake_orders %}
+                        <tr>
+                            <td data-label="Order ID"><span class="cell-strong">#{{ order.id }}</span></td>
+                            <td data-label="Customer">
+                                <div class="cell-strong">{{ order.user.username }}</div>
+                                <div class="cell-muted">{{ order.created_at|date:"M d, Y" }}</div>
+                            </td>
+                            <td data-label="Cake">
+                                <div class="product-summary-stack">
+                                    <div class="cell-truncate cell-strong">{{ order.cake.name|default:"Custom Cake" }}</div>
+                                    <span class="product-code-badge">{{ order.cake.product_code|default:"Not assigned" }}</span>
+                                </div>
+                            </td>
+                            <td data-label="Total"><span class="cell-strong">P{{ order.total_price }}</span></td>
+                            <td data-label="Status"><span class="status-badge status-{{ order.order_status }}">{{ order.get_order_status_display }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="empty-state">
+                                <i class="fas fa-shopping-cart"></i>
+                                <p>No cake orders yet</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="table-footer-note">Showing the latest {{ recent_cake_orders|length }} cake orders.</div>
+        </div>
+        {% endif %}
+
+        {% if can_view_package_orders %}
+        <div class="module-card full-span">
+            <div class="module-header">
+                <h2><i class="fas fa-calendar-check"></i> Recent Package Orders</h2>
+                <a href="{% url 'admin_package_orders' %}" class="view-all-link">View All <i class="fas fa-arrow-right"></i></a>
+            </div>
+            <div class="table-responsive">
+                <table class="module-table">
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Customer</th>
+                            <th>Package</th>
+                            <th>Event Date</th>
+                            <th>Total</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in recent_package_orders %}
+                        <tr>
+                            <td data-label="Order ID"><span class="cell-strong">#{{ order.id }}</span></td>
+                            <td data-label="Customer">
+                                <div class="cell-strong">{{ order.user.username }}</div>
+                                <div class="cell-muted">{{ order.created_at|date:"M d, Y" }}</div>
+                            </td>
+                            <td data-label="Package">
+                                <div class="product-summary-stack">
+                                    <div class="cell-truncate cell-strong">{{ order.package.name|default:"Custom Package" }}</div>
+                                    <span class="product-code-badge">{{ order.package.product_code|default:"Not assigned" }}</span>
+                                </div>
+                            </td>
+                            <td data-label="Event Date">{{ order.event_date|date:"M d, Y" }}</td>
+                            <td data-label="Total"><span class="cell-strong">P{{ order.total_price }}</span></td>
+                            <td data-label="Status"><span class="status-badge status-{{ order.order_status }}">{{ order.get_order_status_display }}</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <i class="fas fa-gift"></i>
+                                <p>No package orders yet</p>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="table-footer-note">Showing the latest {{ recent_package_orders|length }} package orders.</div>
+        </div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
+
+
+
+
+
+
+
+
+

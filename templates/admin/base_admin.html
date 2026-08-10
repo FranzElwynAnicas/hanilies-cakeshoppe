@@ -1,0 +1,1478 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hanilies Admin - {% block title %}Admin Dashboard{% endblock %}</title>
+    
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Custom Admin CSS -->
+    <link rel="stylesheet" href="{% static 'css/admin-custom.css' %}?v=2">
+    <style>
+        /* Ensure sidebar is visible */
+        .admin-sidebar {
+            width: 280px;
+            background: linear-gradient(180deg, #831843 0%, #4C0519 100%);
+            color: white;
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+        
+        .main-content {
+            margin-left: 280px;
+            min-height: 100vh;
+            background: #f8f9fa;
+        }
+        
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            background: #BE185D;
+            color: white;
+            padding-left: 25px;
+        }
+        
+        .nav-link.active {
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            color: white;
+        }
+        
+        .nav-link i {
+            width: 24px;
+        }
+
+        .sidebar-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 0 14px 22px;
+        }
+
+        .sidebar-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .sidebar-group-title {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 0 10px 6px;
+            color: rgba(255, 240, 246, 0.78);
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            text-align: left;
+        }
+
+        .sidebar-group-title::before {
+            content: '';
+            width: 100%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        .sidebar-group-title span {
+            white-space: nowrap;
+            display: block;
+            width: 100%;
+            text-align: left;
+        }
+        
+        .sidebar-header {
+            padding: 25px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .sidebar-header .logo {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            text-decoration: none;
+            color: white;
+            min-width: 0;
+        }
+
+        .sidebar-header .logo-mark {
+            width: 52px;
+            height: 52px;
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            background: linear-gradient(135deg, #fb7185, #f59e0b);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            box-shadow: 0 12px 22px rgba(17, 24, 39, 0.22);
+        }
+
+        .sidebar-header .logo-mark svg {
+            width: 30px;
+            height: 30px;
+            display: block;
+        }
+
+        .sidebar-header .logo-copy {
+            display: block;
+            min-width: 0;
+            font-size: 1.3rem;
+            font-weight: 700;
+            line-height: 1.05;
+            background: linear-gradient(135deg, #fef3c7, #f9a8d4);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .sidebar-header .logo-copy small {
+            display: block;
+            margin-top: 4px;
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            opacity: 0.88;
+            color: #ffffff;
+            -webkit-text-fill-color: #ffffff;
+        }
+        
+        .sidebar-footer {
+            margin-top: auto;
+            padding: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .logout-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.34), rgba(127, 29, 29, 0.52));
+            color: #ffffff;
+            min-height: 48px;
+            border: 1px solid rgba(254, 202, 202, 0.28);
+            font-weight: 800;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+        }
+
+        .logout-btn:hover {
+            transform: translateX(5px);
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            color: #ffffff;
+            box-shadow: 0 10px 22px rgba(220, 38, 38, 0.32);
+        }
+
+        .logout-btn i {
+            font-size: 1rem;
+            color: #fecaca;
+        }
+
+        .logout-btn span {
+            font-size: 0.92rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+        }
+
+        .logout-btn:hover i {
+            color: #ffffff;
+        }
+        
+        .admin-header {
+            background: white;
+            padding: 15px 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            border-bottom: 3px solid #D4AF37;
+        }
+        
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #343a40;
+            margin: 0;
+        }
+        
+        .page-title i {
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-right: 10px;
+        }
+        
+        .admin-user {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .user-info {
+            text-align: right;
+        }
+        
+        .user-name {
+            font-weight: 600;
+            color: #343a40;
+        }
+        
+        .user-role {
+            font-size: 0.75rem;
+            color: #FF69B4;
+        }
+        
+        .user-avatar {
+            width: 45px;
+            height: 45px;
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        
+        .content-area {
+            padding: 30px;
+        }
+        
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: 1px solid #e9ecef;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(255,105,180,0.15);
+            border-color: #FF69B4;
+        }
+        
+        .stat-icon {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #FFE4EC, #F8F0E5);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .stat-icon i {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .stat-info {
+            flex: 1;
+        }
+        
+        .stat-info h3 {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #343a40;
+            margin-bottom: 5px;
+        }
+        
+        .stat-change {
+            font-size: 0.75rem;
+            color: #10b981;
+        }
+        
+        .stat-change.negative {
+            color: #ef4444;
+        }
+        
+        /* Module Cards */
+        .module-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            overflow: hidden;
+            margin-bottom: 30px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .module-header {
+            padding: 20px 25px;
+            border-bottom: 2px solid #FFE4EC;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(135deg, white, #FFE4EC);
+        }
+        
+        .module-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #343a40;
+            margin: 0;
+        }
+        
+        .module-header h2 i {
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-right: 10px;
+        }
+        
+        .module-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .module-table th {
+            background: #FFE4EC;
+            padding: 12px 20px;
+            text-align: left;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #DB2777;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .module-table td {
+            padding: 12px 20px;
+            border-bottom: 1px solid #e9ecef;
+            color: #495057;
+            font-size: 0.9rem;
+        }
+
+        .module-table th.is-sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .module-table th.is-sortable::after {
+            content: '\2195';
+            font-size: 0.72rem;
+            margin-left: 8px;
+            color: #be185d;
+            opacity: 0.7;
+        }
+
+        .module-table th.sort-asc::after {
+            content: '\2191';
+            opacity: 1;
+        }
+
+        .module-table th.sort-desc::after {
+            content: '\2193';
+            opacity: 1;
+        }
+        
+        .module-table tr:hover td {
+            background: linear-gradient(135deg, #FFE4EC, #F8F0E5);
+        }
+
+        .table-pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+            padding: 12px 16px 0;
+        }
+
+        .table-pagination-info {
+            display: inline-flex;
+            align-items: center;
+            min-height: 36px;
+            color: #6b7280;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .table-pagination-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .table-pagination-button {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid #fbcfe8;
+            background: white;
+            color: #be185d;
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .table-pagination-button:disabled,
+        .table-pagination-button.is-disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        
+        /* Status Badges */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        
+        .status-pending { background: #fef3c7; color: #d97706; }
+        .status-confirmed { background: #e0e7ff; color: #4f46e5; }
+        .status-preparing { background: #fef3c7; color: #d97706; }
+        .status-out_for_delivery { background: #e0e7ff; color: #4f46e5; }
+        .status-delivered, .status-paid, .status-completed { background: #d1fae5; color: #10b981; }
+        .status-payment_retry { background: #fef3c7; color: #b45309; }
+        .status-cancelled { background: #fee2e2; color: #dc2626; }
+        .status-verifying { background: #fef3c7; color: #d97706; }
+        .status-failed, .status-rejected { background: #fee2e2; color: #dc2626; }
+        .status-active { background: #d1fae5; color: #10b981; }
+        
+        /* Buttons */
+        .btn-primary, .btn-gold {
+            background: linear-gradient(135deg, #FF69B4, #D4AF37) !important;
+            border: none;
+            border-radius: 50px;
+            padding: 10px 25px;
+            color: white;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            display: inline-block;
+            text-decoration: none;
+        }
+        
+        .btn-primary:hover, .btn-gold:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255,105,180,0.3);
+            color: white;
+        }
+        
+        .btn-outline-gold {
+            background: transparent;
+            border: 2px solid #FF69B4;
+            color: #FF69B4;
+            border-radius: 50px;
+            padding: 8px 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-outline-gold:hover {
+            background: linear-gradient(135deg, #FF69B4, #D4AF37);
+            color: white;
+            border-color: transparent;
+        }
+        
+        .btn-sm {
+            padding: 5px 12px;
+            font-size: 0.8rem;
+            border-radius: 20px;
+        }
+        
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 10px 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+            font-family: 'Poppins', sans-serif;
+            transition: all 0.3s ease;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #FF69B4;
+            box-shadow: 0 0 0 3px rgba(255,105,180,0.1);
+        }
+        
+        /* Alerts */
+        .alert {
+            border: none;
+            border-radius: 15px;
+            padding: 15px 20px;
+            border-left: 5px solid;
+            margin-bottom: 20px;
+        }
+        
+        .alert-success {
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+            border-left-color: #28a745;
+            color: #155724;
+        }
+        
+        .alert-danger {
+            background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+            border-left-color: #dc3545;
+            color: #721c24;
+        }
+        
+        .alert-warning {
+            background: linear-gradient(135deg, #fff3cd, #ffeeba);
+            border-left-color: #ffc107;
+            color: #856404;
+        }
+        
+        .alert-info {
+            background: linear-gradient(135deg, #d1ecf1, #bee5eb);
+            border-left-color: #17a2b8;
+            color: #0c5460;
+        }
+        
+        /* Role Badges */
+        .role-owner { background: #fbbf24; color: #78350f; }
+        .role-admin { background: #f97316; color: white; }
+        .role-manager { background: #3b82f6; color: white; }
+        .role-supervisor { background: #14b8a6; color: white; }
+        .role-baker { background: #ec489a; color: white; }
+        .role-packager { background: #8b5cf6; color: white; }
+        .role-cashier { background: #10b981; color: white; }
+        .role-customer, .role-viewer { background: #6b7280; color: white; }
+        
+        /* Responsive */
+        @media (max-width: 992px) {
+            .admin-sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+            }
+            .admin-sidebar.open {
+                transform: translateX(0);
+            }
+            .main-content {
+                margin-left: 0;
+            }
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .content-area {
+                padding: 20px;
+            }
+            .module-header {
+                flex-direction: column;
+                gap: 10px;
+                text-align: center;
+            }
+            .sidebar-header {
+                padding: 20px 16px;
+            }
+            .sidebar-header .logo {
+                gap: 12px;
+            }
+            .sidebar-header .logo-mark {
+                width: 48px;
+                height: 48px;
+                border-radius: 14px;
+            }
+            .sidebar-header .logo-mark svg {
+                width: 26px;
+                height: 26px;
+            }
+            .sidebar-header .logo-copy {
+                font-size: 1.12rem;
+            }
+            .sidebar-header .logo-copy small {
+                font-size: 0.64rem;
+            }
+        }
+        
+        .text-center {
+            text-align: center;
+        }
+        
+        .mt-auto {
+            margin-top: auto;
+        }
+    /* Pass polish additions */
+.sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    z-index: 998;
+}
+
+.sidebar-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+body.sidebar-open {
+    overflow: hidden;
+}
+
+.admin-header-title-group,
+.admin-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.admin-header-title-group {
+    min-width: 0;
+}
+
+.mobile-nav-toggle {
+    display: none;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #fbcfe8;
+    border-radius: 999px;
+    background: white;
+    color: #be185d;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.mobile-nav-toggle:hover {
+    background: #fff1f6;
+}
+
+.admin-account-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #fbcfe8;
+    border-radius: 999px;
+    padding: 8px 14px;
+    color: #be185d;
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: white;
+}
+
+.admin-site-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #fbcfe8;
+    border-radius: 999px;
+    padding: 9px 16px;
+    color: white;
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    text-shadow: 0 1px 2px rgba(76, 5, 25, 0.22);
+    background: linear-gradient(135deg, #FF69B4, #D4AF37);
+    box-shadow: 0 10px 24px rgba(255, 105, 180, 0.18);
+}
+
+.admin-site-link:hover {
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 14px 28px rgba(255, 105, 180, 0.24);
+}
+.admin-account-link:hover {
+    background: #fff1f6;
+    color: #9d174d;
+}
+
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.admin-table-action-stack,
+.admin-table-select-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.admin-table-inline-form {
+    display: inline;
+    margin: 0;
+}
+
+.admin-bulk-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f4d9e5;
+    background: linear-gradient(180deg, #ffffff, #fffafb);
+}
+
+.admin-bulk-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.admin-bulk-count {
+    color: #6b7280;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.admin-bulk-toolbar .form-control {
+    min-width: 180px;
+}
+
+.admin-bulk-select-cell,
+.admin-bulk-select-head {
+    width: 56px;
+    text-align: center;
+}
+
+.admin-bulk-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: #db2777;
+    cursor: pointer;
+}
+
+.module-table tr.is-highlighted td {
+    background: linear-gradient(135deg, #fff1f6, #fef3c7);
+}
+
+@media (max-width: 992px) {
+    .admin-header {
+        padding: 14px 18px;
+    }
+
+    .mobile-nav-toggle {
+        display: inline-flex;
+    }
+
+    .admin-account-link {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .admin-header {
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .admin-header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .admin-site-link {
+        width: 100%;
+        justify-content: center;
+        min-height: 48px;
+    }
+
+    .page-title {
+        font-size: 1.15rem;
+        line-height: 1.25;
+    }
+
+    .user-info {
+        display: none;
+    }
+    .sidebar-footer {
+        padding: 16px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .logout-btn {
+        width: 100%;
+        min-height: 52px;
+        justify-content: center;
+        gap: 10px;
+        padding: 14px 18px;
+        border-radius: 14px;
+    }
+
+    .logout-btn span {
+        font-size: 0.95rem;
+    }
+
+    .table-pagination {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .table-pagination-actions {
+        width: 100%;
+    }
+
+    .table-pagination-button {
+        justify-content: center;
+        flex: 1;
+    }
+
+    .admin-bulk-toolbar,
+    .admin-bulk-toolbar-group,
+    .admin-bulk-toolbar .btn-primary,
+    .admin-bulk-toolbar .btn-secondary,
+    .admin-bulk-toolbar .form-control {
+        width: 100%;
+    }
+
+    .admin-table-action-stack,
+    .admin-table-select-row,
+    .admin-order-status-form {
+        width: 100%;
+    }
+
+    .mobile-card-table {
+        border-collapse: separate;
+        border-spacing: 0 12px;
+    }
+
+    .mobile-card-table thead {
+        display: none;
+    }
+
+    .mobile-card-table,
+    .mobile-card-table tbody,
+    .mobile-card-table tr,
+    .mobile-card-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .mobile-card-table tr {
+        border: 1px solid #f3d6e5;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 10px 24px rgba(148, 163, 184, 0.12);
+        background: white;
+        margin-bottom: 12px;
+    }
+
+    .mobile-card-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 10px 14px;
+        white-space: normal;
+        text-align: right;
+        border-bottom: 1px solid #fce7f3;
+    }
+
+    .mobile-card-table td::before {
+        content: attr(data-label);
+        color: #9d174d;
+        font-weight: 600;
+        text-align: left;
+    }
+
+    .mobile-card-table td[data-label="Actions"] {
+        display: block;
+        text-align: left;
+    }
+
+    .mobile-card-table td[data-label="Actions"]::before {
+        display: block;
+        margin-bottom: 8px;
+    }
+
+    .mobile-card-table tr:hover td {
+        background: transparent;
+    }
+
+    .mobile-card-table td:last-child {
+        border-bottom: none;
+    }
+}
+</style>
+
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div id="container">
+        <!-- Sidebar -->
+        <aside class="admin-sidebar">
+            <div class="sidebar-header">
+                <a href="{% url 'admin_dashboard' %}" class="logo">
+                    <span class="logo-mark" aria-hidden="true">
+                        <svg viewBox="0 0 64 64" role="img" focusable="false" aria-hidden="true">
+                            <path d="M10 30 32 12l22 18v5a3 3 0 0 1-3 3h-4v12a6 6 0 0 1-6 6H23a6 6 0 0 1-6-6V38h-4a3 3 0 0 1-3-3z" fill="#f6b267"/>
+                            <path d="M7 29a4 4 0 0 1 1.47-3.1l20.99-17.3a4 4 0 0 1 5.08 0l20.99 17.3A4 4 0 0 1 57 29v2a3 3 0 0 1-4.91 2.32L32 16.78 11.91 33.32A3 3 0 0 1 7 31z" fill="#f58ca4"/>
+                            <path d="M28 39h8v17h-8z" fill="#fff7ed"/>
+                        </svg>
+                    </span>
+                    <span class="logo-copy">Hanilies<br><small>Admin Panel</small></span>
+                </a>
+            </div>
+            
+            <div class="sidebar-nav">
+                {% if admin_menu %}
+                    {% for group in admin_menu %}
+                    <div class="sidebar-group">
+                        <div class="sidebar-group-title"><span>{{ group.title }}</span></div>
+                        {% for item in group.items %}
+                        <a href="{% url item.url %}" class="nav-link {% if request.resolver_match.url_name == item.url %}active{% endif %}">
+                            <i class="fas fa-{{ item.icon }}"></i>
+                            <span>{{ item.name }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="sidebar-group">
+                        <div class="sidebar-group-title"><span>Dashboard</span></div>
+                        <a href="{% url 'admin_dashboard' %}" class="nav-link {% if request.resolver_match.url_name == 'admin_dashboard' %}active{% endif %}">
+                            <i class="fas fa-house"></i>
+                            <span>Admin Dashboard</span>
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div class="sidebar-footer"><a href="{% url 'logout' %}" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-right-from-bracket"></i>
+                    <span>Logout</span>
+                </a>
+            </div>
+        </aside>
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="admin-header">
+                <div class="admin-header-title-group">
+                    <button type="button" class="mobile-nav-toggle" id="mobileAdminNavToggle" aria-label="Open admin navigation" aria-expanded="false">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h1 class="page-title">
+                        <i class="fas fa-{% block page_icon %}tachometer-alt{% endblock %}"></i>
+                        {% block page_title %}Admin Dashboard{% endblock %}
+                    </h1>
+                </div>
+                <div class="admin-header-actions">
+                    <a href="{% url 'home' %}" class="admin-site-link" target="_blank" rel="noopener noreferrer">
+                        <i class="fas fa-external-link-alt"></i> Open Homepage
+                    </a>
+                    <a href="{% url 'profile' %}?section=profile&tab=password#profile-edit-card" class="admin-account-link">
+                        <i class="fas fa-user-cog"></i> Account Settings
+                    </a>
+                    <div class="admin-user">
+                        <div class="user-info">
+                            <div class="user-name">{{ request.user.get_full_name|default:request.user.username }}</div>
+                            <a href="{% url 'logout' %}" class="user-role" onclick="return confirm('Are you sure you want to logout?')">Log out</a>
+                        </div>
+                        <div class="user-avatar">
+                            {{ request.user.username|first|upper }}
+                        </div>
+                    </div>
+                </div>
+            </header>
+            
+            <div class="content-area">
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+                
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true" style="display: none;">
+        <div class="modal-dialog modal-dialog-centered modal-xl modal-fullscreen-md-down">
+            <div class="modal-content image-zoom-modal-content border-0">
+                <div class="modal-header border-0 pb-0 align-items-center">
+                    <div class="d-flex align-items-center gap-3">
+                        <button type="button" class="image-zoom-close" data-bs-dismiss="modal" aria-label="Close">x</button>
+                        <h5 class="modal-title mb-0" id="imageZoomModalLabel">Image Preview</h5>
+                    </div>
+                    <div class="image-zoom-counter" id="imageZoomModalCounter">1 / 1</div>
+                </div>
+                <div class="modal-body pt-2">
+                    <div class="image-zoom-stage">
+                        <img id="imageZoomModalPreview" src="" alt="Zoomed product preview" class="img-fluid rounded-4 w-100" style="display: none;">
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0 justify-content-center gap-3">
+                    <button type="button" class="image-zoom-nav" id="imageZoomModalPrev">
+                        <i class="fas fa-caret-left"></i> Previous
+                    </button>
+                    <button type="button" class="image-zoom-nav" id="imageZoomModalNext">
+                        Next <i class="fas fa-caret-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var imageZoomModalElement = document.getElementById('imageZoomModal');
+            if (!imageZoomModalElement) {
+                return;
+            }
+
+            var imageZoomModal = new bootstrap.Modal(imageZoomModalElement);
+            var imageZoomModalLabel = document.getElementById('imageZoomModalLabel');
+            var imageZoomModalPreview = document.getElementById('imageZoomModalPreview');
+            var imageZoomModalCounter = document.getElementById('imageZoomModalCounter');
+            var imageZoomModalPrev = document.getElementById('imageZoomModalPrev');
+            var imageZoomModalNext = document.getElementById('imageZoomModalNext');
+            var activeZoomItems = [];
+            var activeZoomIndex = 0;
+
+            function buildZoomItemsFromTrigger(trigger) {
+                var zoomImages = (trigger.dataset.zoomImages || '').split('|').filter(Boolean);
+                if (zoomImages.length) {
+                    return zoomImages.map(function (imageSrc) {
+                        return {
+                            src: imageSrc,
+                            title: trigger.dataset.zoomTitle || 'Image Preview',
+                        };
+                    });
+                }
+
+                var zoomGallery = trigger.dataset.zoomGallery;
+                if (zoomGallery) {
+                    var galleryTriggers = Array.from(document.querySelectorAll('.image-zoom-trigger[data-zoom-gallery="' + zoomGallery + '"]'));
+                    var galleryItems = galleryTriggers
+                        .map(function (galleryTrigger) {
+                            return {
+                                src: galleryTrigger.dataset.zoomSrc || '',
+                                title: galleryTrigger.dataset.zoomTitle || 'Image Preview',
+                            };
+                        })
+                        .filter(function (item) {
+                            return Boolean(item.src);
+                        });
+
+                    if (galleryItems.length) {
+                        activeZoomIndex = Math.max(galleryTriggers.indexOf(trigger), 0);
+                        return galleryItems;
+                    }
+                }
+
+                if (trigger.dataset.zoomSrc) {
+                    return [{
+                        src: trigger.dataset.zoomSrc,
+                        title: trigger.dataset.zoomTitle || 'Image Preview',
+                    }];
+                }
+
+                return [];
+            }
+
+            function renderZoomImage() {
+                var imageCount = activeZoomItems.length || 1;
+                var activeItem = activeZoomItems[activeZoomIndex] || { src: '', title: 'Image Preview' };
+
+                imageZoomModalLabel.textContent = activeItem.title || 'Image Preview';
+                imageZoomModalPreview.src = activeItem.src || '';
+                imageZoomModalPreview.alt = activeItem.title || 'Zoomed product preview';
+                imageZoomModalPreview.style.display = activeItem.src ? 'block' : 'none';
+                imageZoomModalCounter.textContent = (activeZoomIndex + 1) + ' / ' + imageCount;
+                imageZoomModalPrev.disabled = imageCount <= 1;
+                imageZoomModalNext.disabled = imageCount <= 1;
+            }
+
+            imageZoomModalPrev.addEventListener('click', function () {
+                if (activeZoomItems.length <= 1) {
+                    return;
+                }
+
+                activeZoomIndex = (activeZoomIndex - 1 + activeZoomItems.length) % activeZoomItems.length;
+                renderZoomImage();
+            });
+
+            imageZoomModalNext.addEventListener('click', function () {
+                if (activeZoomItems.length <= 1) {
+                    return;
+                }
+
+                activeZoomIndex = (activeZoomIndex + 1) % activeZoomItems.length;
+                renderZoomImage();
+            });
+
+            document.addEventListener('click', function (event) {
+                var trigger = event.target.closest('.image-zoom-trigger');
+                if (!trigger) {
+                    return;
+                }
+
+                event.preventDefault();
+                activeZoomItems = buildZoomItemsFromTrigger(trigger);
+                if (!activeZoomItems.length) {
+                    return;
+                }
+                if (!trigger.dataset.zoomGallery) {
+                    activeZoomIndex = parseInt(trigger.dataset.zoomStartIndex || '0', 10);
+                }
+                if (Number.isNaN(activeZoomIndex) || activeZoomIndex < 0 || activeZoomIndex >= activeZoomItems.length) {
+                    activeZoomIndex = 0;
+                }
+                renderZoomImage();
+                imageZoomModal.show();
+            });
+
+            imageZoomModalElement.addEventListener('hidden.bs.modal', function () {
+                activeZoomItems = [];
+                activeZoomIndex = 0;
+                imageZoomModalPreview.src = '';
+                imageZoomModalPreview.alt = 'Zoomed product preview';
+                imageZoomModalPreview.style.display = 'none';
+                imageZoomModalLabel.textContent = 'Image Preview';
+                imageZoomModalCounter.textContent = '1 / 1';
+            });
+        });
+
+        function parseTableValue(value) {
+            const normalized = value.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+            const numericValue = normalized.replace(/[#,PHPphp\u20b1,]/g, '').trim();
+
+            if (numericValue && !Number.isNaN(Number(numericValue))) {
+                return { type: 'number', value: Number(numericValue) };
+            }
+
+            const timestamp = Date.parse(normalized);
+            if (!Number.isNaN(timestamp) && /\d/.test(normalized)) {
+                return { type: 'date', value: timestamp };
+            }
+
+            return { type: 'text', value: normalized.toLowerCase() };
+        }
+
+        function enhanceAdminTable(table) {
+            if (table.dataset.paginationMode === 'server') {
+                return;
+            }
+
+            const body = table.tBodies[0];
+            if (!body) {
+                return;
+            }
+
+            const rows = Array.from(body.rows).filter(function(row) {
+                return row.cells.length > 0 && row.cells[0].colSpan !== table.tHead.rows[0].cells.length;
+            });
+
+            if (rows.length === 0) {
+                return;
+            }
+
+            const pageSize = 10;
+            let currentPage = 1;
+            let activeSort = { index: null, direction: 'asc' };
+
+            const controls = document.createElement('div');
+            controls.className = 'table-pagination';
+            controls.innerHTML = `
+                <div class="table-pagination-info"></div>
+                <div class="table-pagination-actions">
+                    <button type="button" class="table-pagination-button" data-action="prev">Previous</button>
+                    <button type="button" class="table-pagination-button" data-action="next">Next</button>
+                </div>
+            `;
+            table.parentNode.insertBefore(controls, table.nextSibling);
+
+            const info = controls.querySelector('.table-pagination-info');
+            const previousButton = controls.querySelector('[data-action="prev"]');
+            const nextButton = controls.querySelector('[data-action="next"]');
+
+            function renderPage() {
+                const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+                currentPage = Math.min(currentPage, totalPages);
+                const startIndex = (currentPage - 1) * pageSize;
+                const endIndex = startIndex + pageSize;
+
+                rows.forEach(function(row, index) {
+                    row.style.display = index >= startIndex && index < endIndex ? '' : 'none';
+                });
+
+                info.textContent = `Showing ${Math.min(startIndex + 1, rows.length)}-${Math.min(endIndex, rows.length)} of ${rows.length}`;
+                previousButton.disabled = currentPage === 1;
+                nextButton.disabled = currentPage === totalPages;
+            }
+
+            previousButton.addEventListener('click', function() {
+                if (currentPage > 1) {
+                    currentPage -= 1;
+                    renderPage();
+                }
+            });
+
+            nextButton.addEventListener('click', function() {
+                const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+                if (currentPage < totalPages) {
+                    currentPage += 1;
+                    renderPage();
+                }
+            });
+
+            Array.from(table.tHead.rows[0].cells).forEach(function(headerCell, index) {
+                const label = headerCell.textContent.trim().toLowerCase();
+                const isSortable = !['actions', 'image', 'features'].includes(label);
+
+                if (!isSortable) {
+                    return;
+                }
+
+                headerCell.classList.add('is-sortable');
+                headerCell.addEventListener('click', function() {
+                    const direction = activeSort.index === index && activeSort.direction === 'asc' ? 'desc' : 'asc';
+                    activeSort = { index: index, direction: direction };
+
+                    Array.from(table.tHead.rows[0].cells).forEach(function(cell) {
+                        cell.classList.remove('sort-asc', 'sort-desc');
+                    });
+                    headerCell.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+                    rows.sort(function(rowA, rowB) {
+                        const valueA = parseTableValue(rowA.cells[index].innerText || rowA.cells[index].textContent || '');
+                        const valueB = parseTableValue(rowB.cells[index].innerText || rowB.cells[index].textContent || '');
+
+                        if (valueA.value === valueB.value) {
+                            return 0;
+                        }
+
+                        const comparison = valueA.value > valueB.value ? 1 : -1;
+                        return direction === 'asc' ? comparison : -comparison;
+                    });
+
+                    rows.forEach(function(row) {
+                        body.appendChild(row);
+                    });
+
+                    currentPage = 1;
+                    renderPage();
+                });
+            });
+
+            renderPage();
+        }
+
+        function syncMobileCardTables() {
+            const shouldUseCards = window.innerWidth <= 640;
+
+            document.querySelectorAll('.module-table').forEach(function(table) {
+                const hasDataLabels = Boolean(table.querySelector('tbody td[data-label]'));
+                table.classList.toggle('mobile-card-table', shouldUseCards && hasDataLabels);
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.module-table').forEach(enhanceAdminTable);
+            syncMobileCardTables();
+            window.addEventListener('resize', syncMobileCardTables);
+        });
+
+        function initBulkActionForm(form) {
+            if (!form.id) {
+                return;
+            }
+
+            const rowCheckboxes = Array.from(document.querySelectorAll('input[name="selected_ids"][form="' + form.id + '"]'));
+            const toggles = Array.from(document.querySelectorAll('[data-bulk-toggle-for="' + form.id + '"]'));
+            const countTargets = Array.from(document.querySelectorAll('[data-bulk-count-for="' + form.id + '"]'));
+            const actionField = form.querySelector('select[name="action"]');
+            const submitButton = form.querySelector('[data-bulk-submit]');
+
+            if (!rowCheckboxes.length || !actionField || !submitButton) {
+                return;
+            }
+
+            function updateBulkState() {
+                const selectedCount = rowCheckboxes.filter(function(checkbox) {
+                    return checkbox.checked;
+                }).length;
+                const allSelected = selectedCount > 0 && selectedCount === rowCheckboxes.length;
+
+                toggles.forEach(function(toggle) {
+                    toggle.checked = allSelected;
+                    toggle.indeterminate = selectedCount > 0 && selectedCount < rowCheckboxes.length;
+                });
+
+                countTargets.forEach(function(target) {
+                    target.textContent = selectedCount + ' selected';
+                });
+
+                submitButton.disabled = selectedCount === 0 || !actionField.value;
+            }
+
+            toggles.forEach(function(toggle) {
+                toggle.addEventListener('change', function() {
+                    rowCheckboxes.forEach(function(checkbox) {
+                        checkbox.checked = toggle.checked;
+                    });
+                    updateBulkState();
+                });
+            });
+
+            rowCheckboxes.forEach(function(checkbox) {
+                checkbox.addEventListener('change', updateBulkState);
+            });
+
+            actionField.addEventListener('change', updateBulkState);
+
+            form.addEventListener('submit', function(event) {
+                const selectedCount = rowCheckboxes.filter(function(checkbox) {
+                    return checkbox.checked;
+                }).length;
+
+                if (selectedCount === 0 || !actionField.value) {
+                    event.preventDefault();
+                    return;
+                }
+
+                const selectedOption = actionField.options[actionField.selectedIndex];
+                const confirmTemplate = selectedOption ? selectedOption.dataset.confirm : '';
+                if (confirmTemplate) {
+                    const confirmMessage = confirmTemplate.replace('{count}', String(selectedCount));
+                    if (!window.confirm(confirmMessage)) {
+                        event.preventDefault();
+                    }
+                }
+            });
+
+            updateBulkState();
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('[data-bulk-form]').forEach(initBulkActionForm);
+        });
+
+        // Mobile admin sidebar toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            const sidebar = document.querySelector('.admin-sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            const toggle = document.getElementById('mobileAdminNavToggle');
+
+            if (!sidebar || !overlay || !toggle) {
+                return;
+            }
+
+            function setSidebarState(isOpen) {
+                sidebar.classList.toggle('open', isOpen);
+                overlay.classList.toggle('open', isOpen);
+                document.body.classList.toggle('sidebar-open', isOpen);
+                toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            }
+
+            toggle.addEventListener('click', function() {
+                setSidebarState(!sidebar.classList.contains('open'));
+            });
+
+            overlay.addEventListener('click', function() {
+                setSidebarState(false);
+            });
+
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') {
+                    setSidebarState(false);
+                }
+            });
+
+            document.querySelectorAll('.admin-sidebar .nav-link, .admin-sidebar .logout-btn').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 992) {
+                        setSidebarState(false);
+                    }
+                });
+            });
+
+            window.addEventListener('resize', function() {
+                if (window.innerWidth > 992) {
+                    setSidebarState(false);
+                }
+            });
+        });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

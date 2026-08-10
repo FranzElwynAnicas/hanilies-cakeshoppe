@@ -1,0 +1,184 @@
+{% extends "admin/base_admin.html" %}
+
+{% block title %}Package Order Preview{% endblock %}
+{% block page_title %}Customer Order Preview{% endblock %}
+{% block page_icon %}calendar-check{% endblock %}
+
+{% block content %}
+<div class="module-card order-preview-shell">
+    <div class="module-header order-preview-header">
+        <h2><i class="fas fa-calendar-alt"></i> Package Order #{{ order.id }}</h2>
+        <a href="{{ back_url }}" class="btn-preview-back">
+            <i class="fas fa-arrow-left"></i> {{ back_label }}
+        </a>
+    </div>
+
+    <div class="preview-grid">
+        <section class="preview-panel">
+            <h3>Customer</h3>
+            <p><strong>Name:</strong> {{ order.contact_name|default:order.user.get_full_name|default:order.user.username }}</p>
+            <p><strong>Username:</strong> {{ order.user.username }}</p>
+            <p><strong>Email:</strong> {{ order.contact_email|default:order.user.email|default:"-" }}</p>
+            <p><strong>Phone:</strong> {{ order.contact_phone|default:"-" }}</p>
+            <p><strong>Venue:</strong> {{ order.venue|default:"-" }}</p>
+        </section>
+
+        <section class="preview-panel">
+            <h3>Order Summary</h3>
+            <div class="order-summary-stack">
+                <div class="order-summary-item"><span class="order-summary-label">Package</span><span class="order-summary-value">{{ order.package.name|default:"Custom Package" }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Product ID</span><span class="order-summary-value">{{ order.package.product_code|default:"Not assigned" }}</span></div>
+                {% if order_product_summary %}<p class="order-summary-note">{{ order_product_summary }}</p>{% endif %}
+                <div class="order-summary-item"><span class="order-summary-label">Status</span><span class="order-summary-value">{{ order.get_order_status_display }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Event Type</span><span class="order-summary-value">{{ order.get_event_type_display }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Event Date</span><span class="order-summary-value">{{ order.event_date|date:"Y-m-d" }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Event Time</span><span class="order-summary-value">{{ order.event_time|time:"H:i"|default:"-" }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Total Price</span><span class="order-summary-value">₱{{ order.total_price }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Payment Plan</span><span class="order-summary-value">{{ order.get_payment_plan_display }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Deposit Amount</span><span class="order-summary-value">₱{{ order.deposit_amount }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Balance Due</span><span class="order-summary-value">₱{{ order.balance_due }}</span></div>
+                <div class="order-summary-item"><span class="order-summary-label">Created</span><span class="order-summary-value">{{ order.created_at|date:"Y-m-d H:i" }}</span></div>
+            </div>
+        </section>
+
+        <section class="preview-panel">
+            <h3>Design Reference</h3>
+            {% if order.design_reference %}
+            <div class="order-preview-media-grid">
+                <article class="order-preview-media-card">
+                    <div class="order-preview-media-meta">Package Design Reference</div>
+                    <div class="image-zoom-frame order-preview-media-frame">
+                        <img src="{{ order.design_reference.url }}" alt="Design reference for package order {{ order.id }}" class="order-preview-media-image">
+                        <button type="button" class="image-zoom-trigger" data-zoom-src="{{ order.design_reference.url }}" data-zoom-title="Package Design Reference for Order #{{ order.id }}">
+                            <i class="fas fa-search-plus"></i> Zoom
+                        </button>
+                    </div>
+                    <p class="order-preview-media-caption">Customer-uploaded design reference from the package order details flow.</p>
+                </article>
+            </div>
+            {% else %}
+            <p class="order-preview-media-note">No design reference image was uploaded for this package order.</p>
+            {% endif %}
+        </section>
+
+        <section class="preview-panel">
+            <h3>Package Customization</h3>
+            <p><strong>Selected Add-ons:</strong> {{ order.selected_addons|linebreaksbr|default:"-" }}</p>
+            <p><strong>Cake Flavor:</strong> {{ order.cake_flavor|default:"-" }}</p>
+            <p><strong>Cake Frosting:</strong> {{ order.cake_frosting|default:"-" }}</p>
+            <p><strong>Cake Filling:</strong> {{ order.cake_filling|default:"-" }}</p>
+            <p><strong>Cake Message:</strong> {{ order.cake_message|default:"-" }}</p>
+        </section>
+
+        <section class="preview-panel">
+            <h3>Payments</h3>
+            {% for payment in order.payments.all %}
+                <div class="payment-row">
+                    <p><strong>Payment #{{ payment.id }}</strong></p>
+                    <p>{{ payment.get_payment_purpose_display }} | {{ payment.get_payment_method_display }} | {{ payment.get_payment_status_display }}</p>
+                    <p>Amount: ₱{{ payment.amount }}</p>
+                    <p>{% if payment.payment_method == 'gcash' %}GCash Reference Number: {{ payment.reference_number|default:"-" }}{% else %}GCash Reference Number: Not required{% endif %}</p>
+                </div>
+            {% empty %}
+                <p>No payments recorded yet.</p>
+            {% endfor %}
+        </section>
+    </div>
+</div>
+
+<style>
+    .order-preview-shell { overflow: hidden; }
+    .order-preview-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 20px;
+    }
+    .preview-panel {
+        background: #fffaf0;
+        border: 1px solid #f5e4b8;
+        border-radius: 16px;
+        padding: 20px;
+    }
+    .preview-panel h3 {
+        margin-top: 0;
+        margin-bottom: 14px;
+        color: #b45309;
+    }
+    .preview-panel p {
+        margin: 0 0 10px;
+        line-height: 1.5;
+    }
+    .order-summary-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 8px 0;
+        border-bottom: 1px solid #f7e8bf;
+    }
+    .order-summary-item:last-of-type {
+        border-bottom: none;
+    }
+    .order-summary-label {
+        font-weight: 700;
+        color: #7c2d12;
+    }
+    .order-summary-value {
+        text-align: right;
+        font-weight: 600;
+        color: #1f2937;
+    }
+    .order-summary-note {
+        margin: 2px 0 8px;
+        color: #6b7280;
+        font-size: 0.88rem;
+        line-height: 1.5;
+    }
+    .payment-row {
+        padding: 12px 0;
+        border-top: 1px solid #f5e4b8;
+    }
+    .payment-row:first-child {
+        border-top: none;
+        padding-top: 0;
+    }
+    .btn-preview-back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        background: #0f766e;
+        color: white;
+        padding: 10px 14px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    @media (max-width: 767px) {
+        .preview-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+        .preview-panel {
+            padding: 16px;
+        }
+        .order-preview-header {
+            align-items: stretch;
+        }
+        .order-preview-header h2,
+        .btn-preview-back {
+            width: 100%;
+        }
+        .order-summary-item {
+            flex-direction: column;
+            gap: 6px;
+        }
+        .order-summary-value {
+            text-align: left;
+        }
+    }
+</style>
+{% endblock %}
+
+

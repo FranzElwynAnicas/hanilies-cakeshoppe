@@ -1,0 +1,8157 @@
+from io import BytesIO, StringIO
+import base64
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+import json
+from pathlib import Path
+import shutil
+import tempfile
+from urllib.parse import quote, urlsplit
+from PIL import Image, ImageDraw
+from django.contrib.auth.models import User
+from django.core.cache import cache
+from django.core import mail
+from django.core.management import call_command
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
+from django.test.utils import override_settings
+from django.urls import reverse
+from django.utils import timezone
+
+from .forms import (
+    BOOKING_BLOCKED_MESSAGE,
+    BOOKING_FULL_MESSAGE,
+    CAKE_BOOKING_FULL_MESSAGE,
+    CAKE_DAILY_ORDER_LIMIT,
+    CAKE_MAX_BOOKING_MESSAGE,
+    INVALID_BOOKING_WINDOW_MESSAGE,
+    MINIMUM_BOOKING_MESSAGE,
+    ORDER_DAILY_BOOKING_LIMIT,
+    PACKAGE_BOOKING_FULL_MESSAGE,
+    PACKAGE_DAILY_EVENT_LIMIT,
+    PACKAGE_MAX_BOOKING_MESSAGE,
+    CakeBookingDateForm,
+    PackageBookingDateForm,
+    build_cake_booking_window,
+    build_package_booking_window,
+)
+from .models import ActivityLog, BookingCalendarBlock, Cake, CakeCustomization, CakeOrder, ContactInquiry, HomeHeroImage, HomeStripImage, Notification, Package, PackageOrder, PackageThumbnail, Payment, RefundRequest, Testimonial, UserProfile
+from .payment_qr import build_gcash_checkout_details, generate_qr_code_data_uri
+from .views import (
+    CAKE_CUSTOMIZATION_GROUP_SPECS,
+    CAKE_DECORATION_OPTIONS,
+    DEFAULT_CAKE_CUSTOMIZATION_OPTIONS,
+    _build_option_editor_groups,
+    _get_selected_option_labels,
+    _parse_customization_options_payload,
+    _parse_delivery_datetime,
+    _validate_checkout_payment_submission,
+)
+
+
+TEST_MEDIA_ROOT = tempfile.mkdtemp()
+
+
+def build_test_image_upload(name='proof.jpg', image_format='JPEG', content_type='image/jpeg', reference_number='HANI-TEST-001', amount='1350.00', include_receipt_text=True, image_size=(1200, 700)):
+    image_bytes = BytesIO()
+    image = Image.new('RGB', image_size, color='white')
+    if include_receipt_text:
+        draw = ImageDraw.Draw(image)
+        receipt_lines = [
+            'GCash',
+            f'Reference No: {reference_number}',
+            f'Amount: P{amount}',
+            'Transaction Successful',
+            'Paid to Hanilies Cakeshoppe',
+        ]
+        y_position = 40
+        for line in receipt_lines:
+            draw.text((40, y_position), line, fill='black')
+            y_position += 28
+    image.save(
+        image_bytes,
+        format=image_format,
+    )
+    return SimpleUploadedFile(name, image_bytes.getvalue(), content_type=content_type)
+
+
+class ViewHelperUnitTests(TestCase):
+    def test_validate_checkout_payment_submission_rejects_broken_png_without_crashing(self):
+        broken_png = base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnHCqgAAAAASUVORK5CYII='
+        )
+        proof_image = SimpleUploadedFile(
+            'broken-proof.png',
+            broken_png,
+            content_type='image/png',
+        )
+
+        normalized_reference, payment_error = _validate_checkout_payment_submission(
+            'HANI-DEMO-001',
+            proof_image,
+            Decimal('1200.00'),
+            submitted_amount='1200.00',
+        )
+
+        self.assertIsNone(normalized_reference)
+        self.assertEqual(
+            payment_error, 'Only JPG, JPEG, PNG, and WebP files are allowed.')
+
+    def test_validate_checkout_payment_submission_rejects_disallowed_extension(self):
+        proof_image = build_test_image_upload(
+            'receipt.txt',
+            content_type='image/jpeg',
+            reference_number='HANI-DEMO-002',
+            amount='1200.00',
+        )
+
+        normalized_reference, payment_error = _validate_checkout_payment_submission(
+            'HANI-DEMO-002',
+            proof_image,
+            Decimal('1200.00'),
+            submitted_amount='1200.00',
+        )
+
+        self.assertIsNone(normalized_reference)
+        self.assertEqual(
+            payment_error, 'Only JPG, JPEG, PNG, and WebP files are allowed.')
+
+    def test_validate_checkout_payment_submission_rejects_tiny_image(self):
+        proof_image = build_test_image_upload(
+            'tiny-proof.jpg',
+            reference_number='HANI-DEMO-003',
+            amount='1200.00',
+            image_size=(120, 120),
+        )
+
+        normalized_reference, payment_error = _validate_checkout_payment_submission(
+            'HANI-DEMO-003',
+            proof_image,
+            Decimal('1200.00'),
+            submitted_amount='1200.00',
+        )
+
+        self.assertIsNone(normalized_reference)
+        self.assertEqual(
+            payment_error,
+            'The uploaded payment proof image is too small. Please upload a clear receipt image at least 300 x 300 pixels.',
+        )
+
+    def test_validate_checkout_payment_submission_accepts_webp_image(self):
+        proof_image = build_test_image_upload(
+            'proof.webp',
+            image_format='WEBP',
+            content_type='image/webp',
+            reference_number='HANI-DEMO-004',
+            amount='1200.00',
+        )
+
+        normalized_reference, payment_error = _validate_checkout_payment_submission(
+            'HANI-DEMO-004',
+            proof_image,
+            Decimal('1200.00'),
+            submitted_amount='1200.00',
+        )
+
+        self.assertEqual(normalized_reference, 'HANI-DEMO-004')
+        self.assertIsNone(payment_error)
+
+    def test_parse_delivery_datetime_returns_aware_morning_timestamp(self):
+        delivery_datetime = _parse_delivery_datetime('2026-06-15')
+
+        self.assertIsNotNone(delivery_datetime)
+        self.assertTrue(timezone.is_aware(delivery_datetime))
+        self.assertEqual(delivery_datetime.date().isoformat(), '2026-06-15')
+        self.assertEqual(
+            (delivery_datetime.hour, delivery_datetime.minute), (10, 0))
+
+    def test_parse_delivery_datetime_returns_none_for_invalid_date(self):
+        self.assertIsNone(_parse_delivery_datetime('not-a-date'))
+
+    def test_selected_option_labels_ignores_unknown_keys(self):
+        labels, total = _get_selected_option_labels(
+            ['fresh_flowers', 'invalid-option', 'sprinkles'],
+            CAKE_DECORATION_OPTIONS,
+        )
+
+        self.assertEqual(labels, ['Fresh Flowers', 'Edible Sprinkles'])
+        self.assertEqual(total, Decimal('400.00'))
+
+    def test_parse_customization_payload_deduplicates_checkbox_rows_by_label(self):
+        payload = json.dumps({
+            'decorations': [
+                {'label': 'Fresh Flowers', 'price': '300.00', 'key': 'fresh-flowers'},
+                {'label': 'Fresh Flowers', 'price': '125.00', 'key': 'fresh-flowers-2',
+                    'image': 'cake-options/25/decorations/fresh-flowers.jpg'},
+            ],
+        })
+
+        parsed = _parse_customization_options_payload(
+            payload,
+            CAKE_CUSTOMIZATION_GROUP_SPECS,
+        )
+
+        self.assertEqual(len(parsed['decorations']), 1)
+        self.assertEqual(parsed['decorations'][0]['label'], 'Fresh Flowers')
+        self.assertEqual(parsed['decorations'][0]['price'], '125.00')
+        self.assertEqual(
+            parsed['decorations'][0]['key'],
+            'fresh-flowers',
+        )
+        self.assertEqual(
+            parsed['decorations'][0]['image'],
+            'cake-options/25/decorations/fresh-flowers.jpg',
+        )
+
+    def test_option_editor_groups_merge_saved_decoration_with_default_key_variants(self):
+        option_editor_groups = _build_option_editor_groups(
+            {
+                'decorations': [
+                    {
+                        'label': 'Fresh Flowers',
+                        'price': '125.00',
+                        'key': 'fresh-flowers',
+                        'image': 'cake-options/25/decorations/fresh-flowers.jpg',
+                    },
+                ],
+            },
+            CAKE_CUSTOMIZATION_GROUP_SPECS,
+            DEFAULT_CAKE_CUSTOMIZATION_OPTIONS,
+        )
+
+        decorations_group = next(
+            group for group in option_editor_groups if group['key'] == 'decorations'
+        )
+        fresh_flower_rows = [
+            item for item in decorations_group['items']
+            if item['label'] == 'Fresh Flowers'
+        ]
+
+        self.assertEqual(len(fresh_flower_rows), 1)
+        self.assertEqual(fresh_flower_rows[0]['price'], '125.00')
+        self.assertEqual(fresh_flower_rows[0]['key'], 'fresh-flowers')
+        self.assertEqual(
+            fresh_flower_rows[0]['image'],
+            'cake-options/25/decorations/fresh-flowers.jpg',
+        )
+
+
+class BookingDateFormTests(TestCase):
+    def test_cake_booking_date_form_rejects_dates_before_minimum_window(self):
+        form = CakeBookingDateForm({
+            'delivery_date': (timezone.now().date() + timedelta(days=2)).isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [MINIMUM_BOOKING_MESSAGE])
+
+    def test_cake_booking_date_form_rejects_dates_beyond_30_days(self):
+        form = CakeBookingDateForm({
+            'delivery_date': (timezone.now().date() + timedelta(days=31)).isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [CAKE_MAX_BOOKING_MESSAGE])
+
+    def test_package_booking_date_form_rejects_dates_beyond_30_days(self):
+        form = PackageBookingDateForm({
+            'event_date': (timezone.now().date() + timedelta(days=31)).isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [
+                         PACKAGE_MAX_BOOKING_MESSAGE])
+
+    def test_booking_date_forms_use_window_limits_as_widget_attrs(self):
+        cake_form = CakeBookingDateForm()
+        package_form = PackageBookingDateForm()
+        cake_window = build_cake_booking_window()
+        package_window = build_package_booking_window()
+
+        self.assertEqual(
+            cake_form.fields['delivery_date'].widget.attrs['min'], cake_window['min'])
+        self.assertEqual(
+            cake_form.fields['delivery_date'].widget.attrs['max'], cake_window['max'])
+        self.assertEqual(
+            package_form.fields['event_date'].widget.attrs['min'], package_window['min'])
+        self.assertEqual(
+            package_form.fields['event_date'].widget.attrs['max'], package_window['max'])
+
+    def test_booking_date_forms_use_generic_invalid_message_for_bad_input(self):
+        form = CakeBookingDateForm({'delivery_date': 'not-a-date'})
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.errors['delivery_date'], [
+                         INVALID_BOOKING_WINDOW_MESSAGE])
+
+    def test_booking_date_form_rejects_blocked_admin_calendar_date(self):
+        selected_date = timezone.now().date() + timedelta(days=5)
+        BookingCalendarBlock.objects.create(date=selected_date)
+
+        form = CakeBookingDateForm({
+            'delivery_date': selected_date.isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [BOOKING_BLOCKED_MESSAGE])
+
+    def test_cake_booking_date_form_rejects_fully_booked_cake_date(self):
+        selected_date = timezone.now().date() + timedelta(days=5)
+        customer = User.objects.create_user(
+            username='booking-customer', password='TestPass123!')
+        cake = Cake.objects.create(
+            name='Capacity Cake', category='birthday', price=Decimal('500.00'))
+        selected_datetime = timezone.make_aware(
+            datetime.combine(selected_date, time(hour=10)))
+        for index in range(CAKE_DAILY_ORDER_LIMIT):
+            CakeOrder.objects.create(
+                user=customer,
+                cake=cake,
+                quantity=1,
+                total_price=Decimal('500.00'),
+                delivery_date=selected_datetime,
+                contact_name=f'Customer {index}',
+                contact_phone='09170000000',
+                contact_email='booking@example.com',
+            )
+
+        form = CakeBookingDateForm({
+            'delivery_date': selected_date.isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [CAKE_BOOKING_FULL_MESSAGE])
+
+    def test_package_booking_date_form_rejects_fully_booked_package_date(self):
+        selected_date = timezone.now().date() + timedelta(days=5)
+        customer = User.objects.create_user(
+            username='package-booking-customer', password='TestPass123!')
+        package = Package.objects.create(
+            name='Capacity Package', package_type='birthday', base_price=Decimal('2500.00'))
+        for index in range(PACKAGE_DAILY_EVENT_LIMIT):
+            PackageOrder.objects.create(
+                user=customer,
+                package=package,
+                total_price=Decimal('2500.00'),
+                event_date=selected_date,
+                event_type='birthday',
+                event_time=time(hour=10),
+                venue='Hanilies Function Room',
+                contact_name=f'Customer {index}',
+                contact_phone='09170000000',
+                contact_email='booking@example.com',
+            )
+
+        form = PackageBookingDateForm({
+            'event_date': selected_date.isoformat(),
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(form.non_field_errors(), [
+                         PACKAGE_BOOKING_FULL_MESSAGE])
+
+    def test_guest_can_check_public_booking_availability(self):
+        selected_date = timezone.now().date() + timedelta(days=5)
+
+        response = self.client.get(reverse('booking_date_availability'), {
+            'date': selected_date.isoformat(),
+            'order_type': 'cake',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload['available'])
+        self.assertTrue(payload['login_required_to_reserve'])
+        self.assertEqual(payload['capacity'], CAKE_DAILY_ORDER_LIMIT)
+        self.assertEqual(payload['cake_capacity'], CAKE_DAILY_ORDER_LIMIT)
+        self.assertEqual(payload['package_capacity'],
+                         PACKAGE_DAILY_EVENT_LIMIT)
+
+    def test_admin_booking_calendar_page_renders_for_staff(self):
+        admin_user = User.objects.create_superuser(
+            username='calendar-admin',
+            email='calendar-admin@example.com',
+            password='TestPass123!',
+        )
+        self.client.force_login(admin_user)
+
+        response = self.client.get(reverse('admin_booking_calendar'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Booking Calendar')
+        self.assertContains(
+            response, f'{CAKE_DAILY_ORDER_LIMIT} cake orders')
+        self.assertContains(
+            response, f'{PACKAGE_DAILY_EVENT_LIMIT} package events')
+
+
+class PaymentQrUnitTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='qr-tester',
+            password='TestPass123!',
+            email='qr@example.com',
+        )
+
+    @override_settings(HANILIES_GCASH_QR_IMAGE='static/images/qr.png')
+    def test_build_gcash_checkout_details_prefers_static_saved_qr_image(self):
+        preview = build_gcash_checkout_details(
+            '2450.50', 'Chocolate Dream cake order', reference_seed='qr-tester')
+        expected_qr_data_uri = (
+            f"data:image/png;base64,{base64.b64encode(Path('static/images/qr.png').read_bytes()).decode('ascii')}"
+        )
+
+        self.assertEqual(preview['amount_label'], 'P2450.50')
+        self.assertEqual(preview['qr_code_data_uri'], expected_qr_data_uri)
+        self.assertNotIn('payment_reference', preview)
+        self.assertTrue(
+            preview['instruction_payload'].startswith('000201010212'))
+        self.assertNotIn('\n', preview['instruction_payload'])
+
+    @override_settings(HANILIES_GCASH_QR_IMAGE='static/images/missing-qr.png')
+    def test_build_gcash_checkout_details_falls_back_to_generated_qr(self):
+        preview = build_gcash_checkout_details(
+            '2450.50', 'Chocolate Dream cake order', reference_seed='qr-tester')
+
+        self.assertEqual(
+            preview['qr_code_data_uri'],
+            generate_qr_code_data_uri(preview['instruction_payload']),
+        )
+
+    def test_payment_qr_preview_returns_json_for_logged_in_user(self):
+        self.client.login(username='qr-tester', password='TestPass123!')
+
+        response = self.client.get(reverse('payment_qr_preview'), {
+            'amount': '1500.00',
+            'order_label': 'Chocolate Dream cake order',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['amount_label'], 'P1500.00')
+        self.assertEqual(payload['merchant_name'], 'Hanilies Cakeshoppe')
+        self.assertNotIn('payment_reference', payload)
+        self.assertTrue(
+            payload['instruction_payload'].startswith('000201010212'))
+        self.assertNotIn('scan_target_url', payload)
+        self.assertTrue(payload['qr_code_data_uri'].startswith(
+            'data:image/png;base64,'))
+
+    def test_payment_qr_preview_keeps_payload_stable_for_same_session(self):
+        self.client.login(username='qr-tester', password='TestPass123!')
+
+        first_response = self.client.get(reverse('payment_qr_preview'), {
+            'amount': '1500.00',
+            'order_label': 'Chocolate Dream cake order',
+        })
+        second_response = self.client.get(reverse('payment_qr_preview'), {
+            'amount': '1500.00',
+            'order_label': 'Chocolate Dream cake order',
+        })
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(
+            first_response.json()['instruction_payload'],
+            second_response.json()['instruction_payload'],
+        )
+
+    def test_payment_qr_preview_rejects_non_positive_amount(self):
+        self.client.login(username='qr-tester', password='TestPass123!')
+
+        response = self.client.get(reverse('payment_qr_preview'), {
+            'amount': '0.00',
+        })
+
+        self.assertEqual(response.status_code, 400)
+
+
+class CakeModelUnitTests(TestCase):
+    def test_product_code_is_generated_from_record_id(self):
+        cake = Cake.objects.create(
+            name='Code Cake',
+            category='birthday',
+            description='Generated code test.',
+            price=Decimal('900.00'),
+            stock=2,
+            is_active=True,
+        )
+
+        self.assertEqual(cake.product_code, f'CK-{cake.id:04d}')
+
+    def test_image_url_uses_static_fallback_when_no_upload_exists(self):
+        cake = Cake.objects.create(
+            name='Fallback Cake',
+            category='birthday',
+            description='No uploaded image.',
+            price=Decimal('850.00'),
+            stock=3,
+            is_active=True,
+        )
+
+        self.assertEqual(cake.image_url(), '/static/images/bg.png')
+
+
+class PackageModelUnitTests(TestCase):
+    def test_product_code_is_generated_from_record_id(self):
+        package = Package.objects.create(
+            name='Code Package',
+            package_type='christening',
+            description='Generated code test.',
+            base_price=Decimal('2500.00'),
+            status='active',
+            features='Backdrop',
+        )
+
+        self.assertEqual(package.product_code, f'PKG-{package.id:04d}')
+
+
+class CakeOrderViewUnitTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='cake-tester',
+            password='TestPass123!',
+            email='cake@example.com',
+            first_name='Cake',
+            last_name='Tester',
+        )
+        UserProfile.objects.create(
+            user=self.user,
+            role='customer',
+            phone='09123456789',
+            address='Oroquieta City',
+        )
+        self.cake = Cake.objects.create(
+            name='Chocolate Dream',
+            category='birthday',
+            description='Rich chocolate celebration cake.',
+            price=Decimal('1200.00'),
+            stock=5,
+            is_active=True,
+        )
+        self.client.login(username='cake-tester', password='TestPass123!')
+
+    def _cake_delivery_date(self, days_ahead=3):
+        return (timezone.localdate() + timedelta(days=days_ahead)).isoformat()
+
+    def _cake_checkout_reference(self):
+        return 'GCASH-CAKE-REF-001'
+
+    def test_cake_customize_post_creates_order_customization_and_payment(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '2',
+            'decorations': ['fresh_flowers'],
+            'payment_method': 'cod',
+            'payment_amount': '1350.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('cake-proof.jpg', reference_number=generated_reference, amount='1350.00'),
+            'theme': 'Birthday',
+            'tier': '1 Tier',
+            'size': '6 Inches',
+            'shape': 'Round',
+            'flavor': 'Chocolate',
+            'frosting': ['Buttercream'],
+            'filling': ['Chocolate Ganache'],
+            'color_palette': 'Pink and Gold',
+            'message_on_cake': 'Happy Birthday Ella',
+            'special_instructions': 'Add gold accents.',
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'delivery_landmark': 'Near Plaza Burgos',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CakeOrder.objects.count(), 1)
+        self.assertEqual(CakeCustomization.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+        cake_order = CakeOrder.objects.get()
+        deposit_payment = Payment.objects.get(payment_purpose='deposit')
+        balance_payment = Payment.objects.get(payment_purpose='balance')
+        customization = CakeCustomization.objects.get()
+
+        self.assertEqual(cake_order.total_price, Decimal('2700.00'))
+        self.assertEqual(cake_order.payment_plan, 'cod')
+        self.assertTrue(cake_order.order_number.startswith('CKO-'))
+        self.assertEqual(cake_order.deposit_amount, Decimal('1350.00'))
+        self.assertEqual(cake_order.balance_due, Decimal('1350.00'))
+        self.assertEqual(cake_order.size, '1 Tier / 6 Inches')
+        self.assertEqual(cake_order.frosting, 'Buttercream')
+        self.assertEqual(cake_order.filling, 'Chocolate Ganache')
+        self.assertEqual(
+            cake_order.delivery_address,
+            '123 Rizal Street, Brgy. Poblacion 1, Oroquieta City, Misamis Occidental (Landmark: Near Plaza Burgos)',
+        )
+        self.assertEqual(
+            cake_order.delivery_date.date().isoformat(), self._cake_delivery_date())
+        self.assertEqual(customization.additional_decorations, 'Fresh Flowers')
+        self.assertEqual(deposit_payment.payment_method, 'gcash')
+        self.assertEqual(deposit_payment.payment_status, 'verifying')
+        self.assertEqual(deposit_payment.amount, Decimal('1350.00'))
+        self.assertEqual(deposit_payment.reference_number, generated_reference)
+        self.assertEqual(deposit_payment.cake_order_id, cake_order.id)
+        self.assertEqual(balance_payment.payment_method, 'cod')
+        self.assertEqual(balance_payment.payment_status, 'pending')
+        self.assertEqual(balance_payment.amount, Decimal('1350.00'))
+        self.assertEqual(balance_payment.cake_order_id, cake_order.id)
+
+    def test_cake_customize_uses_shown_cake_defaults_when_optional_fields_are_left_blank(self):
+        generated_reference = 'GCASH-CAKE-REF-AS-SHOWN'
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('cake-as-shown-proof.jpg', reference_number=generated_reference, amount='600.00'),
+            'theme': 'Birthday',
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake_order = CakeOrder.objects.get()
+        self.assertEqual(cake_order.total_price, Decimal('1200.00'))
+        self.assertEqual(cake_order.size, '1 Tier / 6 Inches')
+        self.assertEqual(cake_order.shape, 'Round')
+        self.assertEqual(cake_order.flavor, 'Chocolate')
+        self.assertEqual(cake_order.frosting, '')
+        self.assertEqual(cake_order.filling, '')
+
+    def test_cake_customize_supports_multiple_frostings_and_fillings(self):
+        self.cake.customization_options = {
+            'sizes': [{'label': '1 Tier', 'price': '0.00'}],
+            'cake_sizes': [{'label': '8 Inches', 'price': '50.00'}],
+            'shapes': [{'label': 'Round', 'price': '0.00'}],
+            'flavors': [{'label': 'Chocolate', 'price': '0.00'}],
+            'frostings': [
+                {'label': 'Buttercream', 'price': '25.00'},
+                {'label': 'Ganache', 'price': '35.00'},
+            ],
+            'fillings': [
+                {'label': 'Chocolate Ganache', 'price': '40.00'},
+                {'label': 'Strawberry Jam', 'price': '30.00'},
+            ],
+            'decorations': [{'key': 'fresh_flowers', 'label': 'Fresh Flowers', 'price': '300.00'}],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        generated_reference = 'GCASH-CAKE-REF-PRICED'
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'decorations': ['fresh_flowers'],
+            'payment_method': 'cod',
+            'payment_amount': '835.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('cake-proof-multi.jpg', reference_number=generated_reference, amount='835.00'),
+            'theme': 'Birthday',
+            'tier': '1 Tier',
+            'size': '8 Inches',
+            'shape': 'Round',
+            'flavor': 'Chocolate',
+            'frosting': ['Buttercream', 'Ganache'],
+            'filling': ['Chocolate Ganache', 'Strawberry Jam'],
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake_order = CakeOrder.objects.get()
+        self.assertEqual(cake_order.total_price, Decimal('1670.00'))
+        self.assertEqual(cake_order.frosting, 'Buttercream, Ganache')
+        self.assertEqual(cake_order.filling,
+                         'Chocolate Ganache, Strawberry Jam')
+
+    def test_cake_customize_get_renders_gcash_qr_preview(self):
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'multipart/form-data')
+        self.assertContains(response, 'Account Name:')
+        self.assertContains(response, 'GCash Number:')
+        self.assertContains(response, reverse('payment_qr_preview'))
+        self.assertContains(response, '50% GCash Deposit + COD Balance')
+        self.assertContains(response, 'Order Number')
+        self.assertContains(response, 'Amount Due')
+        self.assertContains(response, 'GCash Reference Number')
+        self.assertContains(response, 'Review Cake Order')
+        self.assertContains(response, 'Confirm Cake Order')
+
+    def test_cake_customize_get_keeps_related_routes_in_page(self):
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse('cakes'))
+        self.assertContains(response, reverse('order_tracking'))
+        self.assertContains(response, reverse('payment_qr_preview'))
+        self.assertContains(response, 'Customize')
+        self.assertContains(response, 'Review Design')
+        self.assertContains(response, 'Confirm')
+        self.assertContains(response, 'Choose Tier')
+        self.assertContains(response, 'Choose Size')
+        self.assertContains(response, 'Choose Shape')
+        self.assertContains(response, 'Choose Flavor')
+        self.assertContains(response, 'Choose Frosting')
+        self.assertContains(response, 'Choose Filling')
+        self.assertContains(response, 'Required')
+        self.assertContains(response, 'Optional')
+        self.assertContains(
+            response, 'id="cake-checkout-step-customize"', html=False)
+        self.assertContains(
+            response, 'id="cake-checkout-step-review"', html=False)
+        self.assertContains(
+            response, 'id="cake-checkout-step-confirm"', html=False)
+        self.assertContains(response, 'id="cake-order-form"', html=False)
+        self.assertContains(response, 'id="summary-total"', html=False)
+
+    def test_cake_customize_uses_cake_size_options_from_admin_builder(self):
+        self.cake.customization_options = {
+            'sizes': [
+                {'value': 'one-tier', 'label': '1 Tier', 'price': '0.00'},
+            ],
+            'cake_sizes': [
+                {'value': 'eight-inches',
+                    'label': '8 Inches', 'price': '125.00'},
+            ],
+            'shapes': [
+                {'label': 'Round', 'price': '0.00'},
+            ],
+            'flavors': [
+                {'label': 'Chocolate', 'price': '0.00'},
+            ],
+            'frostings': [
+                {'label': 'Buttercream', 'price': '0.00'},
+            ],
+            'fillings': [
+                {'label': 'Chocolate Ganache', 'price': '0.00'},
+            ],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Choose Tier')
+        self.assertContains(response, 'Choose Size')
+        self.assertContains(response, '1 Tier')
+        self.assertContains(response, '8 Inches')
+
+    def test_cake_customize_renders_decoration_addon_images(self):
+        self.cake.customization_options = {
+            'decorations': [
+                {
+                    'label': 'Fresh Flowers',
+                    'price': '300.00',
+                    'key': 'fresh_flowers',
+                    'image': 'cake-options/25/decorations/fresh-flowers.jpg',
+                },
+            ],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'addon-option-media')
+        self.assertContains(
+            response,
+            '/media/cake-options/25/decorations/fresh-flowers.jpg',
+        )
+        self.assertContains(response, 'Fresh Flowers')
+
+    def test_cake_customize_get_renders_special_occasions_theme_option(self):
+        self.cake.category = 'custom'
+        self.cake.save(update_fields=['category'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Special Occasions')
+        self.assertNotContains(response, 'Graduation')
+
+    def test_cake_customize_get_aligns_theme_options_to_selected_cake_category(self):
+        christening_cake = Cake.objects.create(
+            name='Blessed Day Cake',
+            category='christening',
+            description='Cake for christening celebrations.',
+            price=Decimal('1400.00'),
+            stock=3,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(christening_cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, '<option value="Christening" selected>Christening</option>', html=False)
+        self.assertNotContains(response, '>Birthday</option>', html=False)
+        self.assertNotContains(response, '>Wedding</option>', html=False)
+
+    def test_cake_customize_rejects_gcash_without_reference_and_proof(self):
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'gcash',
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(CakeCustomization.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertContains(
+            response, 'Please enter the GCash reference number from your receipt.')
+        self.assertContains(response, 'value="gcash" checked')
+        self.assertContains(response, 'Full GCash Payment')
+
+    def test_cake_customize_rejects_duplicate_reference_number(self):
+        generated_reference = self._cake_checkout_reference()
+        Payment.objects.create(
+            amount=Decimal('100.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='verifying',
+            reference_number=generated_reference,
+        )
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference.lower(),
+            'proof_image': build_test_image_upload('duplicate-proof.jpg', reference_number=generated_reference, amount='600.00'),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'This GCash reference number has already been used.')
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(CakeCustomization.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 1)
+
+    def test_cake_customize_rejects_invalid_payment_proof_image(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': SimpleUploadedFile('not-an-image.jpg', b'not-an-image', content_type='image/jpeg'),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Only JPG, JPEG, PNG, and WebP files are allowed.')
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(CakeCustomization.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_cake_customize_rejects_unserviceable_delivery_city(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('service-area-proof.jpg', reference_number=generated_reference, amount='600.00'),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Cebu City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'We currently deliver only within the listed service areas.')
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_cake_customize_rejects_delivery_date_outside_order_period(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('window-proof.jpg', reference_number=generated_reference, amount='600.00'),
+            'delivery_date': (timezone.localdate() + timedelta(days=1)).isoformat(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, MINIMUM_BOOKING_MESSAGE)
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_cake_customize_rejects_delivery_date_beyond_30_days(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('late-window-proof.jpg', reference_number=generated_reference, amount='600.00'),
+            'delivery_date': (timezone.now().date() + timedelta(days=31)).isoformat(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, CAKE_MAX_BOOKING_MESSAGE)
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_cake_customize_uses_product_specific_option_prices(self):
+        self.cake.customization_options = {
+            'sizes': [
+                {'label': 'Deluxe 10 inches', 'price': '250.00'},
+            ],
+            'decorations': [
+                {'key': 'sugar_pearls', 'label': 'Sugar Pearls', 'price': '180.00'},
+            ],
+            'flavors': [
+                {'label': 'Chocolate', 'price': '0.00'},
+            ],
+            'shapes': [
+                {'label': 'Round', 'price': '0.00'},
+            ],
+            'frostings': [
+                {'label': 'Buttercream', 'price': '0.00'},
+            ],
+            'fillings': [
+                {'label': 'Chocolate Ganache', 'price': '0.00'},
+            ],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Deluxe 10 inches')
+        self.assertContains(response, '1 Tier')
+        self.assertContains(response, 'Sugar Pearls')
+
+        generated_reference = self._cake_checkout_reference()
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'decorations': ['sugar_pearls'],
+            'payment_method': 'cod',
+            'payment_amount': '815.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('custom-cake-proof.jpg', reference_number=generated_reference, amount='815.00'),
+            'theme': 'Birthday',
+            'tier': 'Deluxe 10 inches',
+            'size': '6 Inches',
+            'shape': 'Round',
+            'flavor': 'Chocolate',
+            'frosting': ['Buttercream'],
+            'filling': ['Chocolate Ganache'],
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake_order = CakeOrder.objects.get()
+        self.assertEqual(cake_order.total_price, Decimal('1630.00'))
+        self.assertEqual(cake_order.size, 'Deluxe 10 inches / 6 Inches')
+        self.assertEqual(CakeCustomization.objects.get(
+        ).additional_decorations, 'Sugar Pearls')
+
+    def test_cake_customize_keeps_default_attribute_options_when_customized_items_exist(self):
+        self.cake.customization_options = {
+            'flavors': [
+                {
+                    'label': 'Vanilla',
+                    'price': '150.00',
+                    'image': 'cake-options/demo/flavors/vanilla.jpg',
+                },
+            ],
+            'sizes': [
+                {
+                    'label': '8 inches',
+                    'price': '200.00',
+                    'image': 'cake-options/demo/sizes/eight-inch.jpg',
+                },
+            ],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Vanilla')
+        self.assertContains(response, 'Chocolate')
+        self.assertContains(response, '8 inches')
+        self.assertNotContains(response, '5 Tier')
+        self.assertContains(response, '4 Tier')
+        self.assertContains(
+            response, '/media/cake-options/demo/flavors/vanilla.jpg')
+        self.assertContains(
+            response, '/media/cake-options/demo/sizes/eight-inch.jpg')
+
+    def test_cake_customize_renders_uploaded_option_images_in_attribute_cards(self):
+        self.cake.customization_options = {
+            'sizes': [
+                {
+                    'label': 'Tall 8 inches',
+                    'price': '120.00',
+                    'image': 'cake-options/demo/sizes/tall-eight.jpg',
+                },
+            ],
+            'shapes': [
+                {
+                    'label': 'Heart',
+                    'price': '90.00',
+                    'image': 'cake-options/demo/shapes/heart-shape.jpg',
+                },
+            ],
+            'flavors': [
+                {
+                    'label': 'Strawberry',
+                    'price': '50.00',
+                    'image': 'cake-options/demo/flavors/strawberry-flavor.jpg',
+                },
+            ],
+            'frostings': [
+                {
+                    'label': 'Ganache',
+                    'price': '75.00',
+                    'image': 'cake-options/demo/frostings/ganache-frosting.jpg',
+                },
+            ],
+            'fillings': [
+                {
+                    'label': 'Mango',
+                    'price': '60.00',
+                    'image': 'cake-options/demo/fillings/mango-filling.jpg',
+                },
+            ],
+        }
+        self.cake.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, '/media/cake-options/demo/sizes/tall-eight.jpg')
+        self.assertContains(
+            response, '/media/cake-options/demo/shapes/heart-shape.jpg')
+        self.assertContains(
+            response, '/media/cake-options/demo/flavors/strawberry-flavor.jpg')
+        self.assertContains(
+            response, '/media/cake-options/demo/frostings/ganache-frosting.jpg')
+        self.assertContains(
+            response, '/media/cake-options/demo/fillings/mango-filling.jpg')
+
+    def test_cake_customize_get_uses_30_day_booking_window(self):
+        response = self.client.get(reverse('cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['cake_order_window']['min'],
+            (timezone.now().date() + timedelta(days=3)).isoformat(),
+        )
+        self.assertEqual(
+            response.context['cake_order_window']['max'],
+            (timezone.now().date() + timedelta(days=30)).isoformat(),
+        )
+        self.assertEqual(CakeOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+
+    def test_cake_customize_accepts_simulated_payment_proof_image(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'random-proof.jpg',
+                reference_number=generated_reference,
+                amount='600.00',
+                include_receipt_text=False,
+            ),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CakeOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+    def test_cake_customize_accepts_valid_payment_proof_with_generic_content_type(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'octet-stream-proof.jpg',
+                content_type='application/octet-stream',
+                reference_number=generated_reference,
+                amount='600.00',
+            ),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CakeOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+    def test_cake_customize_allows_manual_review_with_valid_image_proof(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '600.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'manual-review-proof.jpg',
+                reference_number=generated_reference,
+                amount='600.00',
+                include_receipt_text=False,
+            ),
+            'delivery_date': self._cake_delivery_date(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Cake Tester',
+            'contact_phone': '09123456789',
+            'contact_email': 'cake@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(CakeOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+    def test_cakes_page_shows_special_occasions_label_for_custom_category(self):
+        self.cake.image = 'cakes/catalog-main.jpg'
+        self.cake.save(update_fields=['image'])
+        special_cake = Cake.objects.create(
+            name='Elegant Celebration Cake',
+            category='custom',
+            description='Made for milestone celebrations.',
+            price=Decimal('1850.00'),
+            stock=2,
+            image='cakes/special-occasion.jpg',
+            is_active=True,
+        )
+
+        response = self.client.get(reverse('cakes'), {
+            'category': 'custom',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, special_cake.name)
+        self.assertContains(response, 'Special Occasions')
+        self.assertNotContains(response, '>Custom<', html=False)
+        self.assertContains(response, 'data-zoom-gallery="cakes-catalog"')
+
+
+class PackageFlowUnitTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='package-tester',
+            password='TestPass123!',
+            email='package@example.com',
+            first_name='Package',
+            last_name='Tester',
+        )
+        UserProfile.objects.create(
+            user=self.user,
+            role='customer',
+            phone='09999999999',
+            address='Clarin, Misamis Occidental',
+        )
+        self.package = Package.objects.create(
+            name='Birthday Blast',
+            package_type='kids_birthday',
+            description='Party package with themed cake and balloons.',
+            base_price=Decimal('6500.00'),
+            status='active',
+            customization_options={
+                'addons': [
+                    {'key': 'brownies', 'label': 'Chocofudge Brownies',
+                        'price': '300.00'},
+                    {'key': 'cookies', 'label': 'Chocochip Cookies', 'price': '250.00'},
+                    {'key': 'cupcakes', 'label': 'Themed Cupcakes', 'price': '350.00'},
+                ],
+                'cake_sizes': [
+                    {'value': 'upgrade_10',
+                        'label': 'Upgrade to 10 inches', 'price': '500.00'},
+                ],
+                'cake_shapes': [
+                    {'label': 'Round', 'price': '0.00'},
+                ],
+                'cake_flavors': [
+                    {'label': 'Chocolate', 'price': '0.00'},
+                ],
+                'cake_frostings': [
+                    {'label': 'Buttercream', 'price': '0.00'},
+                ],
+                'cake_fillings': [
+                    {'label': 'Chocolate Ganache', 'price': '0.00'},
+                ],
+                'cake_decorations': [
+                    {'key': 'fresh_flowers',
+                        'label': 'Fresh Flowers', 'price': '300.00'},
+                ],
+            },
+        )
+        self.client.login(username='package-tester', password='TestPass123!')
+
+    def _package_event_date(self, days_ahead=3):
+        return (timezone.localdate() + timedelta(days=days_ahead)).isoformat()
+
+    def _package_checkout_reference(self):
+        return 'GCASH-PACKAGE-REF-001'
+
+    def test_package_order_post_stores_selected_addons_in_session_draft(self):
+        response = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addons': ['brownies', 'cookies'],
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse(
+            'package_cake_customize'))
+
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['package_id'], str(self.package.id))
+        self.assertEqual(draft['selected_addon_labels'], [
+                         'Chocofudge Brownies', 'Chocochip Cookies'])
+        self.assertEqual(draft['addons_total'], '550.00')
+        self.assertEqual(draft['base_total'], '7050.00')
+
+    def test_package_order_post_uses_addon_quantities_for_totals_and_labels(self):
+        response = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'addon_quantity__brownies': '2',
+            'addon_quantity__cookies': '1',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse(
+            'package_cake_customize'))
+
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['selected_addons'], ['brownies', 'cookies'])
+        self.assertEqual(
+            draft['selected_addon_quantities'],
+            {'brownies': 2, 'cookies': 1},
+        )
+        self.assertEqual(
+            draft['selected_addon_labels'],
+            ['2 x Chocofudge Brownies', 'Chocochip Cookies'],
+        )
+        self.assertEqual(draft['addons_total'], '850.00')
+        self.assertEqual(draft['base_total'], '7350.00')
+
+    def test_package_order_post_uses_selected_inclusions_for_totals_and_labels(self):
+        self.package.customization_options = {
+            'included_items': [
+                {
+                    'key': 'mini-cupcakes',
+                    'label': 'Mini Cupcakes',
+                    'quantity': 12,
+                    'price': '25.00',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        response = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_inclusions': ['mini-cupcakes'],
+            'inclusion_quantity__mini-cupcakes': '12',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['selected_inclusions'], ['mini-cupcakes'])
+        self.assertEqual(
+            draft['selected_inclusion_quantities'],
+            {'mini-cupcakes': 12},
+        )
+        self.assertEqual(
+            draft['selected_inclusion_labels'],
+            ['12 x Mini Cupcakes'],
+        )
+        self.assertEqual(draft['inclusions_total'], '300.00')
+        self.assertEqual(draft['base_total'], '6800.00')
+
+    def test_order_package_route_alias_uses_same_package_flow(self):
+        response = self.client.post(reverse('order_package'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addons': ['brownies'],
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse(
+            'package_cake_customize'))
+
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['package_id'], str(self.package.id))
+        self.assertEqual(draft['selected_addon_labels'],
+                         ['Chocofudge Brownies'])
+
+    def test_package_order_post_uses_selected_package_event_type(self):
+        response = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'corporate',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse(
+            'package_cake_customize'))
+
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['event_type'], self.package.package_type)
+
+    def test_order_package_route_blocks_corporate_package_ids(self):
+        corporate_package = Package.objects.create(
+            name='Corporate Launch Bundle',
+            package_type='corporate',
+            description='Legacy corporate package.',
+            base_price=Decimal('9500.00'),
+            status='active',
+        )
+
+        response = self.client.get(reverse('order_package'), {
+            'package_id': str(corporate_package.id),
+        })
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_packages_page_excludes_corporate_packages_from_listing(self):
+        Package.objects.create(
+            name='Corporate Legacy Bundle',
+            package_type='corporate',
+            description='Should not appear in the public package catalog.',
+            base_price=Decimal('8200.00'),
+            status='active',
+        )
+
+        response = self.client.get(reverse('packages'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Corporate Legacy Bundle')
+        self.assertContains(response, self.package.name)
+        self.assertContains(response, 'Adult Birthday Party')
+        self.assertNotContains(response, "Adult's Party")
+        self.assertContains(response, 'data-packages-page-intro')
+        self.assertContains(response, 'packages-page-intro-icon')
+        self.assertContains(response, 'packages-page-intro-icon-art')
+        self.assertContains(response, 'start your order.')
+
+    def test_package_order_renders_uploaded_addon_option_images(self):
+        self.package.customization_options = {
+            'addons': [
+                {
+                    'key': 'brownies',
+                    'label': 'Chocofudge Brownies',
+                    'price': '300.00',
+                    'image': 'package-options/999/addons/brownies-option.jpg',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('package_order'), {
+            'package_id': str(self.package.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'package-addon-media')
+        self.assertContains(
+            response,
+            '/media/package-options/999/addons/brownies-option.jpg',
+        )
+        self.assertContains(response, 'alt="Chocofudge Brownies add-on"')
+
+    def test_package_order_hides_default_addons_when_builder_has_no_choices(self):
+        self.package.customization_options = {}
+        self.package.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('package_order'), {
+            'package_id': str(self.package.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'No optional add-ons are available for this package yet.',
+        )
+        self.assertNotContains(response, 'Chocofudge Brownies')
+
+    def test_package_order_renders_structured_included_items(self):
+        self.package.customization_options = {
+            'included_items': [
+                {
+                    'key': 'themed-cupcakes',
+                    'label': 'Themed Cupcakes',
+                    'quantity': 12,
+                    'price': '35.00',
+                    'image': 'package-inclusions/999/included-items/cupcakes.jpg',
+                },
+            ],
+        }
+        self.package.included_items = '12 x Themed Cupcakes'
+        self.package.save(
+            update_fields=['customization_options', 'included_items'])
+
+        response = self.client.get(reverse('package_order'), {
+            'package_id': str(self.package.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '12 x Themed Cupcakes')
+        self.assertContains(
+            response,
+            '/media/package-inclusions/999/included-items/cupcakes.jpg',
+        )
+        self.assertContains(response, 'Optional Package Items')
+        self.assertContains(response, 'name="selected_inclusions"')
+        self.assertContains(response, 'P35.00 each')
+
+    def test_package_order_auto_includes_zero_price_items_without_selector(self):
+        self.package.customization_options = {
+            'included_items': [
+                {
+                    'key': 'cake-slices',
+                    'label': 'Cake Slices',
+                    'quantity': 24,
+                    'price': '0.00',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        response = self.client.get(reverse('package_order'), {
+            'package_id': str(self.package.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Included in This Package')
+        self.assertContains(response, '24 x Cake Slices')
+        self.assertNotContains(response, 'Automatically included in')
+        self.assertNotContains(response, '>Included<', html=False)
+        self.assertNotContains(
+            response, 'name="selected_inclusions" value="cake-slices"', html=False)
+
+    def test_package_order_normalizes_legacy_event_duration_text(self):
+        self.package.customization_options = {}
+        self.package.features = 'Event duration: 3Ã»4 hours only'
+        self.package.included_items = ''
+        self.package.save(
+            update_fields=['customization_options',
+                           'features', 'included_items']
+        )
+
+        response = self.client.get(reverse('package_order'), {
+            'package_id': str(self.package.id),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Event Duration: 3-4 Hours only')
+        self.assertNotContains(response, 'Event duration: 3Ã»4 hours only')
+
+    def test_package_payment_post_creates_order_and_clears_session_draft(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': ['Chocofudge Brownies'],
+            'base_total': '6800.00',
+            'cake_flavor': 'Vanilla',
+            'cake_frosting': 'Buttercream',
+            'cake_filling': 'Strawberry Jam',
+            'cake_message': 'Happy Birthday Mia',
+            'cake_custom_total': '500.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3650.00',
+            'reference_number': generated_reference,
+            'design_reference': build_test_image_upload('package-design-reference.jpg'),
+            'proof_image': build_test_image_upload('package-proof.jpg', reference_number=generated_reference, amount='3650.00'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(PackageOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+        package_order = PackageOrder.objects.get()
+        deposit_payment = Payment.objects.get(payment_purpose='deposit')
+        balance_payment = Payment.objects.get(payment_purpose='balance')
+
+        self.assertEqual(package_order.total_price, Decimal('7300.00'))
+        self.assertEqual(package_order.payment_plan, 'cod')
+        self.assertTrue(package_order.order_number.startswith('PKO-'))
+        self.assertEqual(package_order.deposit_amount, Decimal('3650.00'))
+        self.assertEqual(package_order.balance_due, Decimal('3650.00'))
+        self.assertEqual(package_order.selected_addons, 'Chocofudge Brownies')
+        self.assertEqual(package_order.cake_message, 'Happy Birthday Mia')
+        self.assertTrue(bool(package_order.design_reference))
+        self.assertEqual(deposit_payment.payment_method, 'gcash')
+        self.assertEqual(deposit_payment.payment_status, 'verifying')
+        self.assertEqual(deposit_payment.amount, Decimal('3650.00'))
+        self.assertEqual(deposit_payment.reference_number, generated_reference)
+        self.assertEqual(deposit_payment.package_order_id, package_order.id)
+        self.assertEqual(balance_payment.payment_method, 'cod')
+        self.assertEqual(balance_payment.payment_status, 'pending')
+        self.assertEqual(balance_payment.amount, Decimal('3650.00'))
+        self.assertEqual(balance_payment.package_order_id, package_order.id)
+        self.assertNotIn('package_order_draft', self.client.session)
+
+    def test_package_payment_rejects_gcash_without_required_fields(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'gcash',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertIn('package_order_draft', self.client.session)
+        self.assertContains(
+            response, 'Please enter the GCash reference number from your receipt.')
+        self.assertContains(response, 'value="gcash" checked')
+        self.assertContains(response, 'Full GCash Payment')
+
+    def test_package_payment_rejects_duplicate_reference_number(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+        Payment.objects.create(
+            amount=Decimal('100.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='verifying',
+            reference_number=generated_reference,
+        )
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference.lower(),
+            'proof_image': build_test_image_upload('duplicate-package-proof.jpg', reference_number=generated_reference, amount='3250.00'),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'This GCash reference number has already been used.')
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 1)
+        self.assertIn('package_order_draft', self.client.session)
+
+    def test_package_payment_rejects_invalid_payment_proof_image(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': SimpleUploadedFile('not-an-image.jpg', b'not-an-image', content_type='image/jpeg'),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Only JPG, JPEG, PNG, and WebP files are allowed.')
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertIn('package_order_draft', self.client.session)
+
+    def test_package_payment_rejects_event_date_outside_order_period(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': (timezone.localdate() + timedelta(days=2)).isoformat(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('package-window-proof.jpg', reference_number=generated_reference, amount='3250.00'),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, MINIMUM_BOOKING_MESSAGE)
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertIn('package_order_draft', self.client.session)
+
+    def test_package_order_uses_product_specific_addons(self):
+        self.package.customization_options = {
+            'addons': [
+                {'key': 'confetti_box', 'label': 'Confetti Box', 'price': '125.00'},
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        response = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addons': ['confetti_box'],
+        })
+
+        self.assertEqual(response.status_code, 302)
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['selected_addon_labels'], ['Confetti Box'])
+        self.assertEqual(draft['addons_total'], '125.00')
+        self.assertEqual(draft['base_total'], '6625.00')
+
+    def test_package_cake_customize_uses_product_specific_option_prices(self):
+        self.package.customization_options = {
+            'cake_sizes': [
+                {'value': 'signature', 'label': 'Signature Upgrade', 'price': '250.00'},
+            ],
+            'cake_flavors': [
+                {'label': 'Cookies and Cream', 'price': '75.00'},
+            ],
+            'cake_shapes': [
+                {'label': 'Round', 'price': '0.00'},
+            ],
+            'cake_frostings': [
+                {'label': 'Buttercream', 'price': '0.00'},
+            ],
+            'cake_fillings': [
+                {'label': 'Chocolate Ganache', 'price': '0.00'},
+            ],
+            'cake_decorations': [
+                {'key': 'mini_macaroons', 'label': 'Mini Macaroons', 'price': '150.00'},
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.post(reverse('package_cake_customize'), {
+            'theme': 'Birthday',
+            'cake_size': 'signature',
+            'flavor': 'Cookies and Cream',
+            'frosting': ['Buttercream'],
+            'filling': ['Chocolate Ganache'],
+            'shape': 'Round',
+            'cake_decorations': ['mini_macaroons'],
+            'message_on_cake': 'Celebrate',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['cake_size_label'], 'Signature Upgrade')
+        self.assertEqual(draft['cake_flavor'], 'Cookies and Cream')
+        self.assertEqual(draft['cake_frosting'], 'Buttercream')
+        self.assertEqual(draft['cake_filling'], 'Chocolate Ganache')
+        self.assertEqual(draft['cake_decoration_labels'], ['Mini Macaroons'])
+        self.assertEqual(draft['cake_custom_total'], '475.00')
+
+    def test_package_cake_customize_supports_multiple_frostings_and_fillings(self):
+        self.package.customization_options = {
+            'cake_sizes': [
+                {'value': 'signature', 'label': 'Signature Upgrade', 'price': '250.00'},
+            ],
+            'cake_flavors': [
+                {'label': 'Cookies and Cream', 'price': '75.00'},
+            ],
+            'cake_shapes': [
+                {'label': 'Round', 'price': '0.00'},
+            ],
+            'cake_frostings': [
+                {'label': 'Buttercream', 'price': '25.00'},
+                {'label': 'Ganache', 'price': '35.00'},
+            ],
+            'cake_fillings': [
+                {'label': 'Chocolate Ganache', 'price': '40.00'},
+                {'label': 'Strawberry Jam', 'price': '30.00'},
+            ],
+            'cake_decorations': [
+                {'key': 'mini_macaroons', 'label': 'Mini Macaroons', 'price': '150.00'},
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.post(reverse('package_cake_customize'), {
+            'theme': 'Birthday',
+            'cake_size': 'signature',
+            'flavor': 'Cookies and Cream',
+            'frosting': ['Buttercream', 'Ganache'],
+            'filling': ['Chocolate Ganache', 'Strawberry Jam'],
+            'shape': 'Round',
+            'cake_decorations': ['mini_macaroons'],
+            'message_on_cake': 'Celebrate',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        draft = self.client.session['package_order_draft']
+        self.assertEqual(draft['cake_frosting'], 'Buttercream, Ganache')
+        self.assertEqual(draft['cake_filling'],
+                         'Chocolate Ganache, Strawberry Jam')
+        self.assertEqual(draft['cake_custom_total'], '605.00')
+
+    def test_package_cake_customize_renders_card_based_option_images(self):
+        self.package.customization_options = {
+            'cake_sizes': [
+                {
+                    'value': 'signature',
+                    'label': 'Signature Upgrade',
+                    'price': '250.00',
+                    'image': 'package-options/321/cake_sizes/signature-upgrade.jpg',
+                },
+            ],
+            'cake_shapes': [
+                {
+                    'label': 'Round',
+                    'price': '0.00',
+                    'image': 'package-options/321/cake_shapes/round.jpg',
+                },
+            ],
+            'cake_flavors': [
+                {
+                    'label': 'Cookies and Cream',
+                    'price': '75.00',
+                    'image': 'package-options/321/cake_flavors/cookies-and-cream.jpg',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Customize Your Package Cake')
+        self.assertContains(response, 'Choose Size Upgrade')
+        self.assertContains(response, 'Choose Shape')
+        self.assertContains(response, 'Choose Flavor')
+        self.assertContains(response, 'attribute-card-media')
+        self.assertContains(
+            response, '/media/package-options/321/cake_sizes/signature-upgrade.jpg')
+        self.assertContains(
+            response, '/media/package-options/321/cake_shapes/round.jpg')
+        self.assertContains(
+            response, '/media/package-options/321/cake_flavors/cookies-and-cream.jpg')
+
+    def test_package_cake_customize_deduplicates_saved_decoration_key_variants(self):
+        self.package.customization_options = {
+            'cake_decorations': [
+                {
+                    'key': 'custom-cake-topper',
+                    'label': 'Custom Cake Topper',
+                    'price': '325.00',
+                    'image': 'package-options/321/cake_decorations/custom-cake-topper.jpg',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        decoration_options = response.context['decoration_options']
+        custom_topper_options = [
+            option for option in decoration_options
+            if option['label'] == 'Custom Cake Topper'
+        ]
+
+        self.assertEqual(len(custom_topper_options), 1)
+        self.assertEqual(custom_topper_options[0]['price'], '325.00')
+        self.assertEqual(custom_topper_options[0]['key'], 'custom-cake-topper')
+        self.assertContains(response, 'addon-option-media')
+        self.assertContains(
+            response,
+            '/media/package-options/321/cake_decorations/custom-cake-topper.jpg',
+        )
+
+    def test_package_cake_customize_hides_removed_edible_image_print_decoration(self):
+        self.package.customization_options = {
+            'cake_decorations': [
+                {
+                    'key': 'edible_image',
+                    'label': 'Edible Image Print',
+                    'price': '200.00',
+                    'image': 'package-options/321/cake_decorations/edible-image-print.jpg',
+                },
+            ],
+        }
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Edible Image Print')
+        self.assertFalse(
+            any(
+                option['label'] == 'Edible Image Print'
+                for option in response.context['decoration_options']
+            )
+        )
+
+    def test_package_cake_customize_hides_default_option_cards_when_builder_has_no_choices(self):
+        self.package.customization_options = {}
+        self.package.save(update_fields=['customization_options'])
+
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'No package cake styling options are available for this package yet.',
+        )
+        self.assertNotContains(response, 'Choose Size Upgrade')
+        self.assertNotContains(response, 'Choose Shape')
+        self.assertNotContains(response, 'Choose Flavor')
+        self.assertNotContains(response, 'Choose Frosting')
+        self.assertNotContains(response, 'Choose Filling')
+        self.assertNotContains(response, 'Optional Cake Decorations')
+        self.assertNotContains(response, 'Upgrade to 10 inches')
+        self.assertNotContains(response, 'Round')
+        self.assertNotContains(response, 'Chocolate Ganache')
+
+    def test_package_payment_rejects_event_date_beyond_30_days(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': (timezone.now().date() + timedelta(days=31)).isoformat(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('package-max-window-proof.jpg', reference_number=generated_reference, amount='3250.00'),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, PACKAGE_MAX_BOOKING_MESSAGE)
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertIn('package_order_draft', self.client.session)
+
+    def test_package_payment_get_uses_30_day_booking_window(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_payment'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['package_order_window']['min'],
+            (timezone.now().date() + timedelta(days=3)).isoformat(),
+        )
+        self.assertEqual(
+            response.context['package_order_window']['max'],
+            (timezone.now().date() + timedelta(days=30)).isoformat(),
+        )
+        self.assertEqual(PackageOrder.objects.count(), 0)
+        self.assertEqual(Payment.objects.count(), 0)
+        self.assertIn('package_order_draft', self.client.session)
+
+    def test_package_payment_accepts_simulated_payment_proof_image(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'random-package-proof.jpg',
+                reference_number=generated_reference,
+                amount='3250.00',
+                include_receipt_text=False,
+            ),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(PackageOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+
+    def test_package_payment_accepts_valid_payment_proof_with_generic_content_type(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'octet-stream-package-proof.jpg',
+                content_type='application/octet-stream',
+                reference_number=generated_reference,
+                amount='3250.00',
+            ),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(PackageOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+        self.assertNotIn('package_order_draft', self.client.session)
+
+    def test_package_payment_allows_manual_review_with_valid_image_proof(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+        generated_reference = self._package_checkout_reference()
+
+        response = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': self._package_event_date(),
+            'event_time': '14:30',
+            'venue': 'Clarin Gymnasium',
+            'contact_name': 'Package Tester',
+            'contact_phone': '09999999999',
+            'contact_email': 'package@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '3250.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload(
+                'manual-review-package-proof.jpg',
+                reference_number=generated_reference,
+                amount='3250.00',
+                include_receipt_text=False,
+            ),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(PackageOrder.objects.count(), 1)
+        self.assertEqual(Payment.objects.count(), 2)
+        self.assertNotIn('package_order_draft', self.client.session)
+
+    def test_package_payment_get_renders_gcash_qr_preview(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+            'cake_custom_total': '0.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_payment'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'multipart/form-data')
+        self.assertContains(response, 'Account Name:')
+        self.assertContains(response, 'GCash Number:')
+        self.assertContains(response, reverse('payment_qr_preview'))
+        self.assertContains(response, '50% GCash Deposit + COD Balance')
+        self.assertContains(response, 'Order Number')
+        self.assertContains(response, 'Amount Due')
+        self.assertContains(response, 'GCash Reference Number')
+        self.assertContains(response, 'Review Package Order')
+        self.assertContains(response, 'Confirm Package Order')
+
+    def test_package_cake_customize_get_renders_special_occasions_theme_option(self):
+        session = self.client.session
+        session['package_order_draft'] = {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addon_labels': [],
+            'base_total': '6500.00',
+        }
+        session.save()
+
+        response = self.client.get(reverse('package_cake_customize'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Special Occasions')
+        self.assertNotContains(response, 'Graduation')
+
+
+class OrderingIntegrationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='integration-user',
+            password='TestPass123!',
+            email='integration@example.com',
+            first_name='Integration',
+            last_name='User',
+        )
+        UserProfile.objects.create(
+            user=self.user,
+            role='customer',
+            phone='09170000000',
+            address='Oroquieta City',
+        )
+        self.cake = Cake.objects.create(
+            name='Mocha Celebration',
+            category='birthday',
+            description='Mocha cake for celebrations.',
+            price=Decimal('980.00'),
+            stock=8,
+            is_active=True,
+        )
+        self.package = Package.objects.create(
+            name='Celebration Package',
+            package_type='kids_birthday',
+            description='Package with cake and add-ons.',
+            base_price=Decimal('7000.00'),
+            status='active',
+            customization_options={
+                'addons': [
+                    {'key': 'brownies', 'label': 'Chocofudge Brownies',
+                        'price': '300.00'},
+                    {'key': 'cupcakes', 'label': 'Themed Cupcakes', 'price': '350.00'},
+                ],
+                'cake_sizes': [
+                    {'value': 'upgrade_10',
+                        'label': 'Upgrade to 10 inches', 'price': '500.00'},
+                ],
+                'cake_shapes': [
+                    {'label': 'Round', 'price': '0.00'},
+                ],
+                'cake_flavors': [
+                    {'label': 'Chocolate', 'price': '0.00'},
+                ],
+                'cake_frostings': [
+                    {'label': 'Buttercream', 'price': '0.00'},
+                ],
+                'cake_fillings': [
+                    {'label': 'Chocolate Ganache', 'price': '0.00'},
+                ],
+                'cake_decorations': [
+                    {'key': 'fresh_flowers',
+                        'label': 'Fresh Flowers', 'price': '300.00'},
+                ],
+            },
+        )
+        self.client.login(username='integration-user', password='TestPass123!')
+
+    def _cake_checkout_reference(self):
+        return 'GCASH-INTEGRATION-CAKE-001'
+
+    def _package_checkout_reference(self):
+        return 'GCASH-INTEGRATION-PACKAGE-001'
+
+    def _create_profile_cake_order(self, order_status='confirmed', user=None, **kwargs):
+        defaults = {
+            'user': user or self.user,
+            'cake': self.cake,
+            'quantity': 1,
+            'total_price': Decimal('980.00'),
+            'payment_plan': 'cod',
+            'deposit_amount': Decimal('490.00'),
+            'balance_due': Decimal('490.00'),
+            'order_status': order_status,
+            'contact_name': 'Integration User',
+            'contact_phone': '09170000000',
+            'contact_email': 'integration@example.com',
+        }
+        defaults.update(kwargs)
+        return CakeOrder.objects.create(**defaults)
+
+    def _create_profile_package_order(self, order_status='pending', user=None, **kwargs):
+        defaults = {
+            'user': user or self.user,
+            'package': self.package,
+            'total_price': Decimal('7000.00'),
+            'payment_plan': 'gcash',
+            'deposit_amount': Decimal('7000.00'),
+            'balance_due': Decimal('0.00'),
+            'order_status': order_status,
+            'event_type': 'kids_birthday',
+            'event_date': date(2026, 8, 10),
+            'venue': 'Oroquieta Gym',
+            'contact_name': 'Integration User',
+            'contact_phone': '09170000000',
+            'contact_email': 'integration@example.com',
+        }
+        defaults.update(kwargs)
+        return PackageOrder.objects.create(**defaults)
+
+    def test_cake_order_redirects_to_tracking_with_created_order(self):
+        generated_reference = self._cake_checkout_reference()
+
+        response = self.client.post(reverse('cake_customize'), {
+            'cake_id': str(self.cake.id),
+            'quantity': '1',
+            'payment_method': 'cod',
+            'payment_amount': '490.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('tracking-cake.jpg', reference_number=generated_reference, amount='490.00'),
+            'theme': 'Birthday',
+            'tier': '1 Tier',
+            'size': '6 Inches',
+            'shape': 'Round',
+            'flavor': 'Mocha',
+            'frosting': ['Buttercream'],
+            'delivery_date': (timezone.now().date() + timedelta(days=7)).isoformat(),
+            'delivery_street_address': '123 Rizal Street',
+            'delivery_barangay': 'Poblacion 1',
+            'delivery_city': 'Oroquieta City',
+            'contact_name': 'Integration User',
+            'contact_phone': '09170000000',
+            'contact_email': 'integration@example.com',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        created_order = CakeOrder.objects.get(user=self.user)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('order_tracking')}?type=cake&id={created_order.id}",
+        )
+
+        tracking_response = self.client.get(response.headers['Location'])
+
+        self.assertEqual(tracking_response.status_code, 200)
+        self.assertEqual(
+            tracking_response.context['selected_order_type'], 'cake')
+        self.assertEqual(
+            tracking_response.context['selected_order'].id, created_order.id)
+        self.assertEqual(
+            tracking_response.context['selected_payment'].cake_order_id, created_order.id)
+        self.assertEqual(
+            len(tracking_response.context['selected_payments']), 2)
+        self.assertContains(tracking_response, 'Submit Cancellation Request')
+        self.assertContains(
+            tracking_response,
+            reverse('request_order_cancellation',
+                    args=['cake', created_order.id]),
+        )
+
+    def test_package_booking_flow_redirects_to_tracking_with_created_order(self):
+        first_step = self.client.post(reverse('package_order'), {
+            'package_id': str(self.package.id),
+            'event_type': 'kids_birthday',
+            'selected_addons': ['brownies', 'cupcakes'],
+        })
+
+        self.assertEqual(first_step.status_code, 302)
+        self.assertEqual(first_step.headers['Location'], reverse(
+            'package_cake_customize'))
+
+        second_step = self.client.post(reverse('package_cake_customize'), {
+            'cake_size': 'upgrade_10',
+            'cake_decorations': ['fresh_flowers'],
+            'theme': 'Galaxy',
+            'flavor': 'Chocolate',
+            'frosting': ['Buttercream'],
+            'filling': ['Chocolate Ganache'],
+            'shape': 'Round',
+            'message_on_cake': 'Happy Birthday Nico',
+            'color_palette': 'Blue and Silver',
+            'cake_instructions': 'Use star accents.',
+        })
+
+        self.assertEqual(second_step.status_code, 302)
+        self.assertEqual(
+            second_step.headers['Location'], reverse('package_payment'))
+
+        generated_reference = self._package_checkout_reference()
+
+        final_step = self.client.post(reverse('package_payment'), {
+            'event_type': 'kids_birthday',
+            'event_date': (timezone.now().date() + timedelta(days=14)).isoformat(),
+            'event_time': '15:00',
+            'venue': 'Oroquieta Gym',
+            'contact_name': 'Integration User',
+            'contact_phone': '09170000000',
+            'contact_email': 'integration@example.com',
+            'payment_method': 'cod',
+            'payment_amount': '4225.00',
+            'reference_number': generated_reference,
+            'proof_image': build_test_image_upload('tracking-package.jpg', reference_number=generated_reference, amount='4225.00'),
+        })
+
+        self.assertEqual(final_step.status_code, 302)
+        created_order = PackageOrder.objects.get(user=self.user)
+        self.assertEqual(
+            final_step.headers['Location'],
+            f"{reverse('order_tracking')}?type=package&id={created_order.id}",
+        )
+        self.assertEqual(created_order.total_price, Decimal('8450.00'))
+        self.assertEqual(created_order.selected_addons,
+                         'Chocofudge Brownies\nThemed Cupcakes')
+        self.assertEqual(created_order.cake_message, 'Happy Birthday Nico')
+
+        tracking_response = self.client.get(final_step.headers['Location'])
+
+        self.assertEqual(tracking_response.status_code, 200)
+        self.assertEqual(
+            tracking_response.context['selected_order_type'], 'package')
+        self.assertEqual(
+            tracking_response.context['selected_order'].id, created_order.id)
+        self.assertEqual(
+            tracking_response.context['selected_payment'].package_order_id,
+            created_order.id,
+        )
+        self.assertEqual(
+            len(tracking_response.context['selected_payments']), 2)
+        self.assertNotIn('package_order_draft', self.client.session)
+
+    def test_profile_shows_recent_orders_after_customer_login(self):
+        cake_order = CakeOrder.objects.create(
+            user=self.user,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('980.00'),
+            payment_plan='cod',
+            deposit_amount=Decimal('490.00'),
+            balance_due=Decimal('490.00'),
+            order_status='confirmed',
+            contact_name='Integration User',
+            contact_phone='09170000000',
+            contact_email='integration@example.com',
+        )
+        package_order = PackageOrder.objects.create(
+            user=self.user,
+            package=self.package,
+            total_price=Decimal('7000.00'),
+            payment_plan='gcash',
+            deposit_amount=Decimal('7000.00'),
+            balance_due=Decimal('0.00'),
+            order_status='pending',
+            event_type='kids_birthday',
+            event_date=date(2026, 8, 10),
+            venue='Oroquieta Gym',
+            contact_name='Integration User',
+            contact_phone='09170000000',
+            contact_email='integration@example.com',
+        )
+
+        response = self.client.get(f'{reverse("profile")}?section=orders')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['order_count'], 2)
+        self.assertContains(response, 'Recent Orders')
+        self.assertContains(
+            response,
+            f'{reverse("order_tracking")}?type=cake&id={cake_order.id}',
+        )
+        self.assertContains(
+            response,
+            f'{reverse("order_tracking")}?type=package&id={package_order.id}',
+        )
+        self.assertContains(response, self.cake.name)
+        self.assertContains(response, self.package.name)
+
+    def test_customer_can_archive_completed_order_from_profile_recent_orders(self):
+        order = self._create_profile_cake_order(order_status='completed')
+
+        response = self.client.post(
+            reverse('customer_order_archive', args=['cake', order.id]),
+        )
+
+        self.assertRedirects(response, f'{reverse("profile")}?section=orders')
+        order.refresh_from_db()
+        self.assertIsNotNone(order.customer_archived_at)
+
+        profile_response = self.client.get(
+            f'{reverse("profile")}?section=orders')
+
+        self.assertEqual(profile_response.status_code, 200)
+        self.assertEqual(profile_response.context['order_count'], 1)
+        self.assertEqual(profile_response.context['recent_orders'], [])
+        self.assertEqual(
+            [item['order'].id for item in profile_response.context['archived_orders']],
+            [order.id],
+        )
+        self.assertContains(profile_response, 'Archived Orders')
+
+        tracking_response = self.client.get(
+            f'{reverse("order_tracking")}?type=cake&id={order.id}'
+        )
+
+        self.assertEqual(tracking_response.status_code, 200)
+        self.assertEqual(
+            tracking_response.context['selected_order'].id, order.id)
+
+    def test_customer_archive_is_disabled_for_pending_order(self):
+        order = self._create_profile_cake_order(order_status='pending')
+
+        profile_response = self.client.get(
+            f'{reverse("profile")}?section=orders')
+
+        self.assertEqual(profile_response.status_code, 200)
+        self.assertContains(
+            profile_response, 'disabled title="Available for completed, cancelled, or refunded orders only"')
+
+        archive_response = self.client.post(
+            reverse('customer_order_archive', args=['cake', order.id]),
+        )
+
+        self.assertRedirects(
+            archive_response, f'{reverse("profile")}?section=orders')
+        order.refresh_from_db()
+        self.assertIsNone(order.customer_archived_at)
+
+    def test_customer_can_unarchive_archived_package_order(self):
+        order = self._create_profile_package_order(
+            order_status='cancelled',
+            customer_archived_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            reverse('customer_order_unarchive', args=['package', order.id]),
+        )
+
+        self.assertRedirects(response, f'{reverse("profile")}?section=orders')
+        order.refresh_from_db()
+        self.assertIsNone(order.customer_archived_at)
+
+        profile_response = self.client.get(
+            f'{reverse("profile")}?section=orders')
+        self.assertEqual(
+            [item['order'].id for item in profile_response.context['recent_orders']],
+            [order.id],
+        )
+        self.assertEqual(profile_response.context['archived_orders'], [])
+
+    def test_customer_cannot_archive_another_customers_order(self):
+        other_user = User.objects.create_user(
+            username='archive-other-user',
+            password='TestPass123!',
+            email='archive-other@example.com',
+        )
+        UserProfile.objects.create(user=other_user, role='customer')
+        order = self._create_profile_cake_order(
+            order_status='completed',
+            user=other_user,
+        )
+
+        response = self.client.post(
+            reverse('customer_order_archive', args=['cake', order.id]),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        order.refresh_from_db()
+        self.assertIsNone(order.customer_archived_at)
+
+    def test_processed_refund_order_can_be_customer_archived(self):
+        order = self._create_profile_cake_order(order_status='confirmed')
+        RefundRequest.objects.create(
+            cake_order=order,
+            requested_by=self.user,
+            reason='Refund processed by cashier',
+            refundable_amount=Decimal('980.00'),
+            status='processed',
+        )
+
+        response = self.client.post(
+            reverse('customer_order_archive', args=['cake', order.id]),
+        )
+
+        self.assertRedirects(response, f'{reverse("profile")}?section=orders')
+        order.refresh_from_db()
+        self.assertIsNotNone(order.customer_archived_at)
+
+    def test_order_tracking_keeps_customer_archived_orders_visible(self):
+        archived_order = CakeOrder.objects.create(
+            user=self.user,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('980.00'),
+            payment_plan='cod',
+            deposit_amount=Decimal('490.00'),
+            balance_due=Decimal('490.00'),
+            order_status='confirmed',
+            contact_name='Integration User',
+            contact_phone='09170000000',
+            contact_email='integration@example.com',
+            is_archived=True,
+        )
+
+        response = self.client.get(
+            f'{reverse("order_tracking")}?type=cake&id={archived_order.id}'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['selected_order'].id, archived_order.id)
+        self.assertContains(response, f'Cake Order #{archived_order.id}')
+        self.assertContains(response, 'Archived Record')
+
+    def test_order_tracking_print_summary_hides_product_code(self):
+        order = CakeOrder.objects.create(
+            user=self.user,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('980.00'),
+            payment_plan='cod',
+            deposit_amount=Decimal('490.00'),
+            balance_due=Decimal('490.00'),
+            order_status='confirmed',
+            contact_name='Integration User',
+            contact_phone='09170000000',
+            contact_email='integration@example.com',
+        )
+        Payment.objects.create(
+            cake_order=order,
+            amount=Decimal('490.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='paid',
+            reference_number='PRINT-CAKE-001',
+        )
+
+        tracking_response = self.client.get(
+            f'{reverse("order_tracking")}?type=cake&id={order.id}'
+        )
+        print_url = reverse('order_tracking_print', args=['cake', order.id])
+
+        self.assertEqual(tracking_response.status_code, 200)
+        self.assertContains(tracking_response, print_url)
+
+        print_response = self.client.get(print_url)
+
+        self.assertEqual(print_response.status_code, 200)
+        self.assertContains(print_response, 'Printable Order Summary')
+        self.assertContains(print_response, self.cake.name)
+        self.assertNotContains(print_response, self.cake.product_code)
+        self.assertContains(print_response, order.contact_name)
+
+
+class SecurityValidationTests(TestCase):
+    def setUp(self):
+        self.viewer = User.objects.create_user(
+            username='viewer-user',
+            password='TestPass123!',
+            email='viewer@example.com',
+        )
+        UserProfile.objects.create(user=self.viewer, role='customer')
+
+        self.admin_user = User.objects.create_user(
+            username='admin-user',
+            password='TestPass123!',
+            email='admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.manager_user = User.objects.create_user(
+            username='manager-user',
+            password='TestPass123!',
+            email='manager@example.com',
+        )
+        UserProfile.objects.create(user=self.manager_user, role='manager')
+        self.cashier_user = User.objects.create_user(
+            username='cashier-user',
+            password='TestPass123!',
+            email='cashier@example.com',
+        )
+        UserProfile.objects.create(user=self.cashier_user, role='cashier')
+        self.baker_user = User.objects.create_user(
+            username='baker-user',
+            password='TestPass123!',
+            email='baker@example.com',
+        )
+        UserProfile.objects.create(user=self.baker_user, role='baker')
+        self.packager_user = User.objects.create_user(
+            username='packager-user',
+            password='TestPass123!',
+            email='packager@example.com',
+        )
+        UserProfile.objects.create(user=self.packager_user, role='packager')
+        self.supervisor_user = User.objects.create_user(
+            username='supervisor-user',
+            password='TestPass123!',
+            email='supervisor@example.com',
+        )
+        UserProfile.objects.create(
+            user=self.supervisor_user, role='supervisor')
+        self.cake = Cake.objects.create(
+            name='Admin Test Cake',
+            category='birthday',
+            description='Cake used for admin order tests.',
+            price=Decimal('999.00'),
+            stock=4,
+            is_active=True,
+        )
+        self.package = Package.objects.create(
+            name='Admin Test Package',
+            package_type='christening',
+            description='Package used for admin order tests.',
+            base_price=Decimal('5000.00'),
+            status='active',
+        )
+
+    def test_guest_is_redirected_to_login_for_protected_tracking_route(self):
+        response = self.client.get(reverse('order_tracking'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('login'), response.headers['Location'])
+
+    def test_guest_is_redirected_to_login_for_protected_print_summary_route(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+
+        response = self.client.get(
+            reverse('order_tracking_print', args=['cake', order.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('login'), response.headers['Location'])
+
+    def test_viewer_is_redirected_home_from_admin_dashboard(self):
+        self.client.login(username='viewer-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('home'))
+
+    def test_admin_role_can_access_admin_dashboard(self):
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['role'], 'admin')
+
+    def test_admin_dashboard_includes_total_sales_for_paid_payments_today(self):
+        Payment.objects.create(
+            amount=Decimal('1250.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('700.00'),
+            payment_method='cod',
+            payment_status='paid',
+            paid_at=timezone.now() - timedelta(days=1),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('300.00'),
+            payment_method='gcash',
+            payment_status='pending',
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('640.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['total_sales_today'], Decimal('1250.00'))
+        self.assertContains(response, "Today's Sales")
+        self.assertContains(response, 'P1250.00')
+        sales_card = next(
+            card for card in response.context['priority_cards']
+            if card['title'] == "Today's Sales"
+        )
+        self.assertEqual(
+            sales_card['url'],
+            f"{reverse('admin_payments')}?tab=archived&period=today#payments-archived",
+        )
+        self.assertEqual(sales_card['link_label'], "View Today's Sales")
+
+    def test_admin_dashboard_includes_weekly_and_monthly_sales_totals(self):
+        now = timezone.now()
+        if now.day > 10:
+            month_scoped_paid_at = now - timedelta(days=10)
+        else:
+            month_scoped_paid_at = now.replace(
+                day=1,
+                hour=12,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+        Payment.objects.create(
+            amount=Decimal('900.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=now,
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('400.00'),
+            payment_method='cod',
+            payment_status='paid',
+            paid_at=now - timedelta(days=2),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('600.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=month_scoped_paid_at,
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('2000.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=now - timedelta(days=40),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('500.00'),
+            payment_method='gcash',
+            payment_status='pending',
+            paid_at=now,
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('725.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            paid_at=now,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        expected_week_total = Decimal('1300.00')
+        if month_scoped_paid_at.date() >= timezone.localdate(now) - timedelta(days=6):
+            expected_week_total += Decimal('600.00')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['total_sales_week'], expected_week_total)
+        self.assertEqual(
+            response.context['total_sales_month'], Decimal('1900.00'))
+        self.assertContains(response, "This Week's Sales")
+        self.assertContains(response, "This Month's Sales")
+        self.assertContains(response, f'P{expected_week_total:.2f}')
+        self.assertContains(response, 'P1900.00')
+
+    def test_admin_dashboard_uses_paid_at_for_archived_sales_timing(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('980.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('980.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        Payment.objects.filter(id=payment.id).update(
+            created_at=timezone.now() - timedelta(days=40),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['total_sales_month'], Decimal('980.00'))
+
+    def test_admin_dashboard_excludes_archived_paid_payment_with_approved_refund(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1100.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1100.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        RefundRequest.objects.create(
+            cake_order=order,
+            payment=payment,
+            requested_by=self.viewer,
+            approved_by=self.admin_user,
+            reason='Customer cancellation',
+            refundable_amount=Decimal('1100.00'),
+            status='approved',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['total_sales_today'], Decimal('0.00'))
+
+    def test_viewer_is_redirected_from_admin_payments(self):
+        self.client.login(username='viewer-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_dashboard'))
+
+    def test_admin_can_access_admin_users_and_payments(self):
+        Payment.objects.create(
+            amount=Decimal('500.00'),
+            payment_method='cod',
+            payment_status='pending',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        payments_response = self.client.get(reverse('admin_payments'))
+        users_response = self.client.get(reverse('admin_users'))
+
+        self.assertEqual(payments_response.status_code, 200)
+        self.assertEqual(users_response.status_code, 200)
+        self.assertEqual(payments_response.context['payments'].count(), 1)
+        self.assertGreaterEqual(users_response.context['users'].count(), 4)
+        self.assertContains(users_response, reverse('admin_user_add'))
+
+    def test_admin_users_page_lists_registered_customer_accounts(self):
+        registered_customer = User.objects.create_user(
+            username='registered-customer',
+            password='TestPass123!',
+            email='registered@example.com',
+            first_name='Registered',
+            last_name='Customer',
+        )
+        UserProfile.objects.create(
+            user=registered_customer,
+            role='customer',
+            phone='09175551234',
+            address='Oroquieta City',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_users'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'registered-customer')
+        self.assertContains(response, 'registered@example.com')
+        customer_page_usernames = [
+            user.username for user in response.context['customer_users_page']]
+        self.assertIn('registered-customer', customer_page_usernames)
+
+    def test_admin_can_create_staff_user_from_admin_panel(self):
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(reverse('admin_user_add'), {
+            'username': 'new-supervisor',
+            'email': 'new-supervisor@example.com',
+            'password': 'TestPass123!',
+            'confirm_password': 'TestPass123!',
+            'first_name': 'New',
+            'last_name': 'Supervisor',
+            'phone': '09179990000',
+            'address': 'Oroquieta City',
+            'role': 'supervisor',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('admin_users'))
+        created_user = User.objects.get(username='new-supervisor')
+        self.assertEqual(created_user.profile.role, 'supervisor')
+        self.assertTrue(created_user.is_staff)
+
+    def test_admin_user_add_rejects_common_passwords(self):
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(reverse('admin_user_add'), {
+            'username': 'weak-supervisor',
+            'email': 'weak-supervisor@example.com',
+            'password': 'password',
+            'confirm_password': 'password',
+            'first_name': 'Weak',
+            'last_name': 'Supervisor',
+            'phone': '09179990000',
+            'address': 'Oroquieta City',
+            'role': 'supervisor',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This password is too common.')
+        self.assertFalse(User.objects.filter(
+            username='weak-supervisor').exists())
+
+    def test_manager_can_access_admin_users(self):
+        self.client.login(username='manager-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_users'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Users')
+
+    def test_cashier_can_access_admin_payments_and_refunds(self):
+        self.client.login(username='cashier-user', password='TestPass123!')
+
+        payments_response = self.client.get(reverse('admin_payments'))
+        refunds_response = self.client.get(reverse('admin_refunds'))
+
+        self.assertEqual(payments_response.status_code, 200)
+        self.assertEqual(refunds_response.status_code, 200)
+
+    def test_manager_can_access_admin_payments(self):
+        self.client.login(username='manager-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'))
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_supervisor_has_full_access_to_operations_and_user_management(self):
+        self.client.login(username='supervisor-user', password='TestPass123!')
+
+        cake_orders_response = self.client.get(reverse('admin_cake_orders'))
+        package_orders_response = self.client.get(
+            reverse('admin_package_orders'))
+        payments_response = self.client.get(reverse('admin_payments'))
+        refunds_response = self.client.get(reverse('admin_refunds'))
+        users_response = self.client.get(reverse('admin_users'))
+
+        self.assertEqual(cake_orders_response.status_code, 200)
+        self.assertEqual(package_orders_response.status_code, 200)
+        self.assertEqual(payments_response.status_code, 200)
+        self.assertEqual(refunds_response.status_code, 200)
+        self.assertEqual(users_response.status_code, 200)
+
+    def test_baker_dashboard_hides_irrelevant_modules(self):
+        self.client.login(username='baker-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cake Orders')
+        self.assertContains(response, 'Total Cake Products')
+        self.assertContains(response, 'Add New Cake Product')
+        self.assertContains(response, 'Recent Cake Orders')
+        self.assertNotContains(response, 'Verify Payments')
+        self.assertNotContains(response, 'Manage Users')
+        self.assertNotContains(response, 'Recent Package Orders')
+        self.assertNotContains(response, 'Recent Audit Trail')
+
+    def test_packager_dashboard_hides_irrelevant_modules(self):
+        self.client.login(username='packager-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Package Orders')
+        self.assertContains(response, 'Total Package Products')
+        self.assertContains(response, 'Add New Package Product')
+        self.assertContains(response, 'Recent Package Orders')
+        self.assertNotContains(response, 'Verify Payments')
+        self.assertNotContains(response, 'Manage Users')
+        self.assertNotContains(response, 'Recent Cake Orders')
+        self.assertNotContains(response, 'Recent Audit Trail')
+
+    def test_cashier_dashboard_shows_payment_tools_but_hides_admin_only_modules(self):
+        self.client.login(username='cashier-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Verify Payments')
+        self.assertContains(response, "Today's Sales")
+        self.assertContains(response, 'Recent Cake Orders')
+        self.assertContains(response, 'Recent Package Orders')
+        self.assertNotContains(response, 'Manage Users')
+        self.assertNotContains(response, 'Review Testimonials')
+        self.assertNotContains(response, 'Recent Audit Trail')
+
+    def test_admin_can_access_activity_logs_page(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for access test.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Audit Trail')
+        self.assertContains(response, 'Created for access test.')
+
+    def test_admin_activity_logs_page_renders_delete_action(self):
+        log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for delete action test.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Status')
+        self.assertContains(response, 'Active')
+        self.assertContains(response, 'Archive')
+        self.assertContains(
+            response,
+            reverse('admin_activity_log_delete', args=[log.id]),
+        )
+
+    def test_admin_activity_logs_archived_view_renders_restore_action(self):
+        log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for restore action test.',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            f"{reverse('admin_activity_logs')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Status')
+        self.assertContains(response, 'Archived')
+        self.assertContains(response, 'Restore')
+        self.assertContains(
+            response,
+            reverse('admin_activity_log_delete', args=[log.id]),
+        )
+
+    def test_admin_can_delete_activity_log_via_post_route(self):
+        log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for delete route test.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_activity_log_delete', args=[log.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_activity_logs'))
+        log.refresh_from_db()
+        self.assertTrue(log.is_archived)
+        self.assertIsNotNone(log.archived_at)
+        self.assertNotContains(self.client.get(
+            reverse('admin_activity_logs')), log.description)
+        self.assertContains(self.client.get(
+            f"{reverse('admin_activity_logs')}?archived=1"), log.description)
+
+    def test_admin_can_restore_archived_activity_log_via_post_route(self):
+        log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for restore route test.',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_activity_log_delete', args=[log.id]),
+            {'next': f"{reverse('admin_activity_logs')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_activity_logs')}?archived=1",
+        )
+        log.refresh_from_db()
+        self.assertFalse(log.is_archived)
+        self.assertIsNone(log.archived_at)
+        self.assertContains(self.client.get(
+            reverse('admin_activity_logs')), log.description)
+        self.assertNotContains(self.client.get(
+            f"{reverse('admin_activity_logs')}?archived=1"), log.description)
+
+    def test_admin_activity_logs_export_tab_renders_export_routes(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Admin signed in.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'), {
+            'tab': 'export',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['current_tab'], 'export')
+        self.assertContains(response, 'Export Logs')
+        self.assertContains(response, reverse(
+            'admin_activity_logs_export', args=['csv']))
+        self.assertContains(response, reverse(
+            'admin_activity_logs_export', args=['xlsx']))
+        self.assertContains(response, reverse('admin_activity_logs_print'))
+        self.assertContains(response, 'Module')
+        self.assertContains(response, 'Status')
+        self.assertNotContains(response, '<th>Target</th>', html=True)
+
+    def test_admin_activity_logs_export_tab_paginates_preview_rows(self):
+        for index in range(12):
+            ActivityLog.objects.create(
+                actor=self.admin_user,
+                actor_role='Admin - All Management',
+                action='User login',
+                target_type='auth',
+                description=f'Export preview row {index}',
+            )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'), {
+            'tab': 'export',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Page 1 of 2')
+        self.assertContains(response, 'export_page=2')
+        self.assertNotContains(response, 'Export preview row 0')
+
+        response = self.client.get(reverse('admin_activity_logs'), {
+            'tab': 'export',
+            'export_page': 2,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Page 2 of 2')
+        self.assertContains(response, 'Export preview row 0')
+        self.assertContains(response, 'Previous')
+
+    def test_admin_activity_logs_export_tab_hides_export_preview_helper_text(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Admin signed in.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'), {
+            'tab': 'export',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<strong>admin-user</strong>', html=True)
+        self.assertNotContains(response, 'Export preview')
+
+    def test_admin_activity_logs_records_hide_account_activity_helper_text(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Admin signed in.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<strong>admin-user</strong>', html=True)
+        self.assertNotContains(response, 'Account activity')
+
+    def test_admin_activity_logs_supports_multi_action_filter(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='create_item',
+            target_type='products',
+            description='Created cake item.',
+        )
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='archive_item',
+            target_type='products',
+            description='Archived package item.',
+        )
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='delete_item',
+            target_type='products',
+            description='Deleted package item.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs'), [
+            ('action', 'create_item'),
+            ('action', 'archive_item'),
+        ])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Created cake item.')
+        self.assertContains(response, 'Archived package item.')
+        self.assertNotContains(response, 'Deleted package item.')
+
+    def test_admin_activity_logs_print_limits_results_to_last_30_days(self):
+        recent_log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Recent activity log.',
+        )
+        old_log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User logout',
+            target_type='auth',
+            description='Old activity log.',
+        )
+        ActivityLog.objects.filter(id=recent_log.id).update(
+            created_at=timezone.now() - timedelta(days=3),
+        )
+        ActivityLog.objects.filter(id=old_log.id).update(
+            created_at=timezone.now() - timedelta(days=45),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_activity_logs_print'), {
+            'date_from': (timezone.localdate() - timedelta(days=60)).isoformat(),
+            'date_to': timezone.localdate().isoformat(),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Recent activity log.')
+        self.assertNotContains(response, 'Old activity log.')
+        self.assertContains(response, 'Last 30 days')
+
+    def test_admin_activity_logs_export_xlsx_route_returns_file(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Recent activity log.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_activity_logs_export', args=['xlsx']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('hanilies-audit-trail-', response['Content-Disposition'])
+
+    def test_admin_activity_logs_export_csv_route_returns_file(self):
+        ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='User login',
+            target_type='auth',
+            description='Recent activity log.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_activity_logs_export', args=['csv']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('hanilies-audit-trail-', response['Content-Disposition'])
+        self.assertContains(response, 'Hanilies Cakeshoppe Audit Trail Report')
+
+    def test_admin_activity_log_delete_preserves_filtered_return_route(self):
+        log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='test_action',
+            target_type='payment',
+            target_id=1,
+            description='Created for filtered return test.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_activity_log_delete', args=[log.id]),
+            {
+                'next': f"{reverse('admin_activity_logs')}?tab=export&action=test_action",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_activity_logs')}?tab=export&action=test_action",
+        )
+
+    def test_admin_can_bulk_archive_activity_logs(self):
+        first_log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='bulk_archive_one',
+            target_type='payment',
+            target_id=1,
+            description='Bulk archive audit log 1.',
+        )
+        second_log = ActivityLog.objects.create(
+            actor=self.admin_user,
+            actor_role='Admin - All Management',
+            action='bulk_archive_two',
+            target_type='payment',
+            target_id=2,
+            description='Bulk archive audit log 2.',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_activity_logs_bulk_action'),
+            {
+                'action': 'archive',
+                'selected_ids': [first_log.id, second_log.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_log.refresh_from_db()
+        second_log.refresh_from_db()
+        self.assertTrue(first_log.is_archived)
+        self.assertTrue(second_log.is_archived)
+
+    def test_admin_dashboard_shows_recent_audit_trail_entries(self):
+        for index in range(6):
+            ActivityLog.objects.create(
+                actor=self.admin_user,
+                actor_role='Admin - All Management',
+                action=f'action_{index}',
+                target_type='payment',
+                target_id=index + 1,
+                description=f'Audit entry {index}',
+            )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_dashboard'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Recent Audit Trail')
+        self.assertContains(response, 'Audit entry 5')
+        self.assertContains(response, 'Audit entry 1')
+        self.assertNotContains(response, 'Audit entry 0')
+        self.assertEqual(len(response.context['recent_activity_logs']), 5)
+
+    def test_admin_can_delete_user_via_post_route(self):
+        delete_user = User.objects.create_user(
+            username='delete-me',
+            password='TestPass123!',
+            email='delete-me@example.com',
+        )
+        UserProfile.objects.create(user=delete_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_user_delete', args=[delete_user.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('admin_users'))
+        delete_user.refresh_from_db()
+        self.assertFalse(delete_user.is_active)
+        active_response = self.client.get(reverse('admin_users'))
+        archived_response = self.client.get(
+            f"{reverse('admin_users')}?archived=1")
+        self.assertNotIn(delete_user, list(active_response.context['users']))
+        self.assertIn(delete_user, list(archived_response.context['users']))
+
+    def test_admin_users_archived_view_renders_restore_and_activate_actions(self):
+        archived_user = User.objects.create_user(
+            username='archived-user',
+            password='TestPass123!',
+            email='archived-user@example.com',
+            is_active=False,
+        )
+        UserProfile.objects.create(user=archived_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(f"{reverse('admin_users')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore')
+        self.assertContains(response, 'Activate Account')
+        self.assertContains(response, reverse(
+            'admin_user_delete', args=[archived_user.id]))
+
+    def test_admin_users_archived_view_links_preserve_archived_return_route(self):
+        archived_user = User.objects.create_user(
+            username='archived-view-link-user',
+            password='TestPass123!',
+            email='archived-view-link-user@example.com',
+            is_active=False,
+        )
+        UserProfile.objects.create(user=archived_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_users_url = f"{reverse('admin_users')}?archived=1"
+        expected_view_url = (
+            f"{reverse('admin_user_view', args=[archived_user.id])}"
+            f"?next={quote(archived_users_url, safe='/')}"
+        )
+
+        response = self.client.get(archived_users_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_view_url)
+
+    def test_admin_user_detail_preserves_archived_back_link(self):
+        archived_user = User.objects.create_user(
+            username='archived-detail-user',
+            password='TestPass123!',
+            email='archived-detail-user@example.com',
+            is_active=False,
+        )
+        UserProfile.objects.create(user=archived_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_users_url = f"{reverse('admin_users')}?archived=1"
+        response = self.client.get(
+            reverse('admin_user_view', args=[archived_user.id]),
+            {'next': archived_users_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['back_url'], archived_users_url)
+        self.assertContains(response, 'Back to Archived Users')
+        self.assertContains(response, f'href="{archived_users_url}"')
+
+    def test_admin_can_activate_user_via_post_route(self):
+        restore_user = User.objects.create_user(
+            username='restore-me',
+            password='TestPass123!',
+            email='restore-me@example.com',
+            is_active=False,
+        )
+        UserProfile.objects.create(user=restore_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_user_delete', args=[restore_user.id]),
+            {
+                'next': f"{reverse('admin_users')}?archived=1",
+                'intent': 'activate',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_users')}?archived=1",
+        )
+        restore_user.refresh_from_db()
+        self.assertTrue(restore_user.is_active)
+
+    def test_admin_can_bulk_activate_archived_users(self):
+        first_user = User.objects.create_user(
+            username='bulk-restore-one',
+            password='TestPass123!',
+            email='bulk-restore-one@example.com',
+            is_active=False,
+        )
+        second_user = User.objects.create_user(
+            username='bulk-restore-two',
+            password='TestPass123!',
+            email='bulk-restore-two@example.com',
+            is_active=False,
+        )
+        UserProfile.objects.create(user=first_user, role='customer')
+        UserProfile.objects.create(user=second_user, role='customer')
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_users_bulk_action'),
+            {
+                'action': 'activate',
+                'selected_ids': [first_user.id, second_user.id],
+                'next': f"{reverse('admin_users')}?archived=1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_users')}?archived=1",
+        )
+        first_user.refresh_from_db()
+        second_user.refresh_from_db()
+        self.assertTrue(first_user.is_active)
+        self.assertTrue(second_user.is_active)
+
+    def test_admin_users_page_renders_delete_action_for_other_users(self):
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_users'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Archive')
+        self.assertContains(response, reverse(
+            'admin_user_delete', args=[self.viewer.id]))
+
+    def test_admin_payments_includes_verifying_gcash_in_review_list(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='0917234567',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(payment, response.context['pending_payments'])
+        self.assertContains(response, 'Payments For Review')
+        self.assertContains(response, 'Under Verification')
+        self.assertContains(response, 'GCash Reference Number')
+        self.assertContains(response, '0917234567')
+
+    def test_admin_payment_verify_creates_activity_log(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='0917234567',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        log = ActivityLog.objects.get(
+            action='payment_status_updated', target_id=payment.id)
+        self.assertEqual(log.actor, self.admin_user)
+        self.assertIn('Updated payment', log.description)
+
+    def test_admin_payments_page_renders_preview_customer_order_actions(self):
+        cake_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        package_order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('4200.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=cake_order,
+            reference_number='CAKE-REF-001',
+        )
+        Payment.objects.create(
+            amount=Decimal('4200.00'),
+            payment_method='gcash',
+            payment_status='pending',
+            package_order=package_order,
+            reference_number='PACKAGE-REF-001',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Preview Customer Order', count=2)
+        self.assertContains(response, reverse(
+            'admin_cake_order_view', args=[cake_order.id]))
+        self.assertContains(response, reverse(
+            'admin_package_order_view', args=[package_order.id]))
+
+    def test_admin_payments_review_pagination_uses_query_routes(self):
+        for index in range(11):
+            order = CakeOrder.objects.create(
+                user=self.viewer,
+                cake=self.cake,
+                quantity=1,
+                total_price=Decimal('999.00'),
+                contact_name='Viewer User',
+                contact_phone='09123456789',
+                contact_email='viewer@example.com',
+            )
+            Payment.objects.create(
+                amount=Decimal('999.00'),
+                payment_method='gcash',
+                payment_purpose='full',
+                payment_status='verifying',
+                cake_order=order,
+                reference_number=f'PAGINATED-{index:03d}',
+            )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        first_response = self.client.get(reverse('admin_payments'))
+        second_response = self.client.get(
+            f'{reverse("admin_payments")}?review_page=2')
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertContains(first_response, 'Showing 1-10 of 11')
+        self.assertContains(first_response, '?review_page=2')
+        self.assertNotContains(first_response, 'PAGINATED-000')
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertContains(second_response, 'Showing 11-11 of 11')
+        self.assertContains(second_response, 'PAGINATED-000')
+        self.assertContains(second_response, reverse('admin_payments'))
+
+    def test_admin_payment_verify_preserves_review_page_query(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='PRESERVE-001',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            f'{reverse("admin_payment_verify", args=[payment.id])}?review_page=2',
+            {'action': 'approve'},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f'{reverse("admin_payments")}?review_page=2',
+        )
+
+    def test_cashier_can_open_order_preview_from_payment_review(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            payment_plan='gcash',
+            deposit_amount=Decimal('0.00'),
+            balance_due=Decimal('0.00'),
+            theme='Birthday',
+            size='8 inches',
+            flavor='Chocolate',
+            frosting='Buttercream',
+            message_on_cake='Happy Birthday',
+            special_instructions='Use gold accents.',
+            delivery_address='Oroquieta City',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_purpose='full',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='CAKE-REF-002',
+        )
+        self.client.login(username='cashier-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_cake_order_view', args=[order.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Customer Order Preview')
+        self.assertContains(response, 'Happy Birthday')
+        self.assertContains(response, 'GCash Reference Number: CAKE-REF-002')
+
+    def test_admin_order_previews_show_not_required_for_cod_balance_reference(self):
+        cake_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        package_order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('4200.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('500.00'),
+            payment_method='cod',
+            payment_purpose='balance',
+            payment_status='pending',
+            cake_order=cake_order,
+        )
+        Payment.objects.create(
+            amount=Decimal('800.00'),
+            payment_method='cod',
+            payment_purpose='balance',
+            payment_status='pending',
+            package_order=package_order,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        cake_response = self.client.get(
+            reverse('admin_cake_order_view', args=[cake_order.id]))
+        package_response = self.client.get(
+            reverse('admin_package_order_view', args=[package_order.id]))
+
+        self.assertEqual(cake_response.status_code, 200)
+        self.assertEqual(package_response.status_code, 200)
+        self.assertContains(
+            cake_response, 'GCash Reference Number: Not required')
+        self.assertContains(
+            package_response, 'GCash Reference Number: Not required')
+
+    @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+    def test_cake_order_preview_renders_zoomable_design_reference(self):
+        cake = Cake.objects.create(
+            name='Zoom Cake',
+            category='birthday',
+            description='Cake with preview image.',
+            price=Decimal('1250.00'),
+            stock=3,
+            is_active=True,
+            image=build_test_image_upload('zoom-cake.jpg'),
+        )
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=cake,
+            quantity=1,
+            total_price=Decimal('1250.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        CakeCustomization.objects.create(
+            cake_order=order,
+            design_reference=build_test_image_upload('design-reference.jpg'),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_cake_order_view', args=[order.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Design Reference')
+        self.assertContains(response, 'Cake Design Reference for Order #')
+        self.assertContains(response, 'data-zoom-src=')
+        self.assertNotContains(response, 'Selected Cake Image')
+
+    @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+    def test_package_order_preview_renders_zoomable_design_reference(self):
+        package = Package.objects.create(
+            name='Zoom Package',
+            package_type='christening',
+            description='Package with gallery images.',
+            base_price=Decimal('5500.00'),
+            status='active',
+        )
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=package,
+            total_price=Decimal('5500.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            design_reference=build_test_image_upload(
+                'package-design-reference.jpg'),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_package_order_view', args=[order.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Design Reference')
+        self.assertContains(response, 'Package Design Reference for Order #')
+        self.assertContains(response, 'data-zoom-src=')
+        self.assertNotContains(response, 'Customer Payment Proof')
+
+    def test_supervisor_can_verify_payment_from_review_queue(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='SUP-VERIFY-001',
+        )
+        self.client.login(username='supervisor-user', password='TestPass123!')
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'paid')
+
+    def test_cashier_can_verify_payment_from_review_queue(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='CASHIER-VERIFY-001',
+        )
+        self.client.login(username='cashier-user', password='TestPass123!')
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'paid')
+
+    def test_admin_can_delete_verified_payment_via_post_route(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1500.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1500.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            reference_number='PAID-001',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_payment_delete', args=[payment.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_payments'))
+        payment.refresh_from_db()
+        self.assertTrue(payment.is_archived)
+        active_response = self.client.get(reverse('admin_payments'))
+        archived_response = self.client.get(
+            f"{reverse('admin_payments')}?archived=1")
+        self.assertNotIn(payment, list(active_response.context['payments']))
+        self.assertIn(payment, list(archived_response.context['payments']))
+
+    def test_admin_can_delete_rejected_payment_via_post_route(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('4200.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('4200.00'),
+            payment_method='cod',
+            payment_status='rejected',
+            package_order=order,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_payment_delete', args=[payment.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_payments'))
+        payment.refresh_from_db()
+        self.assertTrue(payment.is_archived)
+        active_response = self.client.get(reverse('admin_payments'))
+        archived_response = self.client.get(
+            f"{reverse('admin_payments')}?archived=1")
+        self.assertNotIn(payment, list(active_response.context['payments']))
+        self.assertIn(payment, list(archived_response.context['payments']))
+
+    def test_admin_payments_page_renders_delete_actions_for_completed_payments(self):
+        cake_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1800.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        package_order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5200.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        verified_payment = Payment.objects.create(
+            amount=Decimal('1800.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=cake_order,
+            reference_number='PAID-002',
+            paid_at=timezone.now(),
+        )
+        rejected_payment = Payment.objects.create(
+            amount=Decimal('5200.00'),
+            payment_method='cod',
+            payment_status='rejected',
+            package_order=package_order,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse(
+            'admin_payment_delete', args=[verified_payment.id]))
+        self.assertContains(response, reverse(
+            'admin_payment_delete', args=[rejected_payment.id]))
+        self.assertContains(response, 'Archive')
+
+    def test_admin_payments_archived_view_renders_restore_actions(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1750.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1750.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            reference_number='RESTORE-001',
+            paid_at=timezone.now(),
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(f"{reverse('admin_payments')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore')
+        self.assertContains(response, reverse(
+            'admin_payment_delete', args=[payment.id]))
+
+    def test_admin_can_restore_payment_via_post_route(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1650.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1650.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            reference_number='RESTORE-002',
+            paid_at=timezone.now(),
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_payment_delete', args=[payment.id]),
+            {'next': f"{reverse('admin_payments')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_payments')}?archived=1",
+        )
+        payment.refresh_from_db()
+        self.assertFalse(payment.is_archived)
+        self.assertIsNone(payment.archived_at)
+
+    def test_admin_payments_archived_sales_tab_shows_filtered_archived_totals(self):
+        today_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('900.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        older_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('500.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        today_payment = Payment.objects.create(
+            amount=Decimal('900.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=today_order,
+            reference_number='ARCHIVED-TODAY-001',
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        older_payment = Payment.objects.create(
+            amount=Decimal('500.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=older_order,
+            reference_number='ARCHIVED-WEEK-001',
+            paid_at=timezone.now() - timedelta(days=2),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('1200.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=today_order,
+            reference_number='ACTIVE-TODAY-001',
+            paid_at=timezone.now(),
+        )
+        Payment.objects.create(
+            amount=Decimal('1300.00'),
+            payment_method='cod',
+            payment_status='rejected',
+            cake_order=today_order,
+            is_archived=True,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_payments'), {
+            'tab': 'archived',
+            'period': 'today',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['current_payment_tab'], 'archived')
+        self.assertEqual(
+            response.context['archived_sales_summary']['total_paid'],
+            Decimal('900.00'),
+        )
+        self.assertEqual(
+            response.context['archived_sales_summary']['transaction_count'],
+            1,
+        )
+        self.assertIn(
+            today_payment,
+            list(response.context['archived_payments_page'].object_list),
+        )
+        self.assertNotIn(
+            older_payment,
+            list(response.context['archived_payments_page'].object_list),
+        )
+        self.assertContains(response, 'Archived Sales History')
+        self.assertContains(response, 'ARCHIVED-TODAY-001')
+        self.assertNotContains(response, 'ARCHIVED-WEEK-001')
+
+    def test_admin_can_restore_payment_from_archived_sales_tab(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1650.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1650.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            reference_number='RESTORE-ARCHIVED-TAB-001',
+            paid_at=timezone.now(),
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_payment_delete', args=[payment.id]),
+            {'next': f"{reverse('admin_payments')}?tab=archived&period=today"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_payments')}?tab=archived&period=today",
+        )
+        payment.refresh_from_db()
+        self.assertFalse(payment.is_archived)
+        self.assertIsNone(payment.archived_at)
+
+    def test_admin_can_bulk_archive_verified_payments(self):
+        first_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1650.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        second_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1750.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        first_payment = Payment.objects.create(
+            amount=Decimal('1650.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=first_order,
+            reference_number='BULK-PAID-001',
+            paid_at=timezone.now(),
+        )
+        second_payment = Payment.objects.create(
+            amount=Decimal('1750.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=second_order,
+            reference_number='BULK-PAID-002',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_payments_bulk_action'),
+            {
+                'action': 'archive',
+                'selected_ids': [first_payment.id, second_payment.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_payment.refresh_from_db()
+        second_payment.refresh_from_db()
+        self.assertTrue(first_payment.is_archived)
+        self.assertTrue(second_payment.is_archived)
+
+    def test_admin_can_export_sales_report_as_xlsx(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1350.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('1350.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=order,
+            payment_purpose='full',
+            reference_number='SALES-XLSX-001',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_payments_export', args=['xlsx']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('hanilies-sales-report-',
+                      response['Content-Disposition'])
+        from openpyxl import load_workbook
+        workbook = load_workbook(filename=BytesIO(response.content))
+        worksheet = workbook.active
+        self.assertEqual(worksheet['G1'].value, 'GCash Reference Number')
+        self.assertEqual(worksheet['G2'].value, 'SALES-XLSX-001')
+
+    def test_admin_can_export_sales_report_as_pdf(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('4800.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('4800.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            package_order=order,
+            payment_purpose='full',
+            reference_number='SALES-PDF-001',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_payments_export', args=['pdf']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn('hanilies-sales-report-',
+                      response['Content-Disposition'])
+
+    def test_admin_can_export_archived_sales_report_for_selected_period(self):
+        today_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1500.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        older_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('800.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('1500.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=today_order,
+            payment_purpose='full',
+            reference_number='ARCHIVED-EXPORT-TODAY',
+            paid_at=timezone.now(),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('800.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=older_order,
+            payment_purpose='full',
+            reference_number='ARCHIVED-EXPORT-OLDER',
+            paid_at=timezone.now() - timedelta(days=3),
+            is_archived=True,
+        )
+        Payment.objects.create(
+            amount=Decimal('650.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            cake_order=today_order,
+            payment_purpose='full',
+            reference_number='ACTIVE-EXPORT-TODAY',
+            paid_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            reverse('admin_payments_export', args=['xlsx']),
+            {'tab': 'archived', 'period': 'today'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        from openpyxl import load_workbook
+        workbook = load_workbook(filename=BytesIO(response.content))
+        worksheet = workbook.active
+        exported_references = {
+            value for value in (
+                worksheet[f'G{row_index}'].value
+                for row_index in range(2, worksheet.max_row + 1)
+            ) if value
+        }
+        self.assertEqual(exported_references, {'ARCHIVED-EXPORT-TODAY'})
+
+    def test_customer_can_request_cancellation_and_staff_can_process_refund(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            payment_plan='cod',
+            deposit_amount=Decimal('600.00'),
+            balance_due=Decimal('600.00'),
+            order_status='confirmed',
+            delivery_date=timezone.now() + timedelta(days=5),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('600.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='paid',
+            cake_order=order,
+            reference_number='DEP-PAID-001',
+            paid_at=timezone.now(),
+        )
+        balance_payment = Payment.objects.create(
+            amount=Decimal('600.00'),
+            payment_method='cod',
+            payment_purpose='balance',
+            payment_status='pending',
+            cake_order=order,
+        )
+
+        self.client.login(username='viewer-user', password='TestPass123!')
+        response = self.client.post(
+            reverse('request_order_cancellation', args=['cake', order.id]),
+            {'reason': 'Family event was cancelled.'},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        refund_request = RefundRequest.objects.get(cake_order=order)
+        self.assertEqual(refund_request.status, 'requested')
+        self.assertEqual(refund_request.refundable_amount, Decimal('600.00'))
+
+        tracking_response = self.client.get(
+            f'{reverse("order_tracking")}?type=cake&id={order.id}')
+        self.assertEqual(tracking_response.status_code, 200)
+        self.assertContains(tracking_response, 'View Cancellation Details')
+        self.assertContains(
+            tracking_response, 'id="open-cancellation-details-button"', html=False)
+        self.assertContains(tracking_response,
+                            'id="cancellation-request-card"', html=False)
+        self.assertContains(tracking_response, 'd-none', html=False)
+
+        self.client.login(username='admin-user', password='TestPass123!')
+        approve_response = self.client.post(
+            reverse('admin_refund_update', args=[refund_request.id]),
+            {'action': 'approve', 'internal_note': 'Approved for refund.'},
+        )
+
+        self.assertEqual(approve_response.status_code, 302)
+        refund_request.refresh_from_db()
+        order.refresh_from_db()
+        balance_payment.refresh_from_db()
+        self.assertEqual(refund_request.status, 'approved')
+        self.assertEqual(order.order_status, 'cancelled')
+        self.assertEqual(balance_payment.payment_status, 'cancelled')
+
+        self.client.login(username='cashier-user', password='TestPass123!')
+        process_response = self.client.post(
+            reverse('admin_refund_update', args=[refund_request.id]),
+            {'action': 'process', 'refund_reference_number': 'REFUND-001'},
+        )
+
+        self.assertEqual(process_response.status_code, 302)
+        refund_request.refresh_from_db()
+        self.assertEqual(refund_request.status, 'processed')
+        self.assertEqual(refund_request.refund_reference_number, 'REFUND-001')
+
+    def test_admin_can_delete_cake_order_via_post_route(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_cake_order_delete', args=[order.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_cake_orders'))
+        order.refresh_from_db()
+        self.assertTrue(order.is_archived)
+        active_response = self.client.get(reverse('admin_cake_orders'))
+        archived_response = self.client.get(
+            f"{reverse('admin_cake_orders')}?archived=1")
+        self.assertNotIn(order, list(active_response.context['orders']))
+        self.assertIn(order, list(archived_response.context['orders']))
+
+    def test_admin_cake_orders_archived_view_renders_restore_action_option(self):
+        CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            order_status='confirmed',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            f"{reverse('admin_cake_orders')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore Order')
+
+    def test_admin_can_restore_cake_order_via_post_route(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_cake_order_delete', args=[order.id]),
+            {'next': f"{reverse('admin_cake_orders')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_cake_orders')}?archived=1",
+        )
+        order.refresh_from_db()
+        self.assertFalse(order.is_archived)
+        self.assertIsNone(order.archived_at)
+
+    def test_admin_cake_orders_page_renders_delete_action_option(self):
+        CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            order_status='confirmed',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_cake_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Archive Order')
+        self.assertContains(response, 'Ready for Pickup')
+
+    def test_admin_cake_orders_page_renders_preview_summary_action(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_cake_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Preview Summary')
+        self.assertContains(response, reverse(
+            'admin_cake_order_view', args=[order.id]))
+
+    def test_admin_cake_orders_page_shows_latest_payment_status_and_recent_payment_activity_first(self):
+        older_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            order_status='pending',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        newer_order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1099.00'),
+            order_status='pending',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        stale_time = timezone.now() - timedelta(days=1)
+        CakeOrder.objects.filter(id=older_order.id).update(
+            created_at=stale_time,
+            updated_at=stale_time,
+        )
+        Payment.objects.create(
+            amount=Decimal('999.00'),
+            payment_method='gcash',
+            payment_purpose='full',
+            payment_status='verifying',
+            cake_order=older_order,
+            reference_number='CAKE-ADMIN-001',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_cake_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Under Verification')
+        self.assertContains(response, 'Full Payment via GCash')
+        self.assertEqual(response.context['orders'][0].id, older_order.id)
+        self.assertIn(reverse('admin_cake_order_view', args=[
+                      older_order.id]), response.content.decode())
+
+    def test_admin_can_delete_package_order_via_post_route(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_package_order_delete', args=[order.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse(
+            'admin_package_orders'))
+        order.refresh_from_db()
+        self.assertTrue(order.is_archived)
+        active_response = self.client.get(reverse('admin_package_orders'))
+        archived_response = self.client.get(
+            f"{reverse('admin_package_orders')}?archived=1")
+        self.assertNotIn(order, list(active_response.context['orders']))
+        self.assertIn(order, list(archived_response.context['orders']))
+
+    def test_admin_package_orders_archived_view_renders_restore_action_option(self):
+        PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            order_status='confirmed',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(
+            f"{reverse('admin_package_orders')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore Order')
+
+    def test_admin_can_restore_package_order_via_post_route(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_package_order_delete', args=[order.id]),
+            {'next': f"{reverse('admin_package_orders')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f"{reverse('admin_package_orders')}?archived=1",
+        )
+        order.refresh_from_db()
+        self.assertFalse(order.is_archived)
+        self.assertIsNone(order.archived_at)
+
+    def test_admin_archived_cakes_page_renders_restore_action(self):
+        archived_cake = Cake.objects.create(
+            name='Archived Cake',
+            category='birthday',
+            description='Archived cake for restore test.',
+            price=Decimal('850.00'),
+            stock=2,
+            is_active=False,
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(f"{reverse('admin_cakes')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore')
+        self.assertContains(response, reverse(
+            'admin_cake_delete', args=[archived_cake.id]))
+
+    def test_admin_archived_cakes_view_links_preserve_archived_return_route(self):
+        archived_cake = Cake.objects.create(
+            name='Archived Cake Link',
+            category='birthday',
+            description='Archived cake link test.',
+            price=Decimal('900.00'),
+            stock=1,
+            is_active=False,
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_cakes_url = f"{reverse('admin_cakes')}?archived=1"
+        expected_edit_url = (
+            f"{reverse('admin_cake_edit', args=[archived_cake.id])}"
+            f"?next={quote(archived_cakes_url, safe='/')}"
+        )
+
+        response = self.client.get(archived_cakes_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_edit_url)
+
+    def test_admin_cake_edit_preserves_archived_back_link(self):
+        archived_cake = Cake.objects.create(
+            name='Archived Cake Back',
+            category='birthday',
+            description='Archived cake back-link test.',
+            price=Decimal('910.00'),
+            stock=1,
+            is_active=False,
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_cakes_url = f"{reverse('admin_cakes')}?archived=1"
+        response = self.client.get(
+            reverse('admin_cake_edit', args=[archived_cake.id]),
+            {'next': archived_cakes_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['back_url'], archived_cakes_url)
+        self.assertEqual(
+            response.context['back_label'], 'Back to Archived Cake Products')
+        self.assertContains(response, f'href="{archived_cakes_url}"')
+
+    def test_admin_can_restore_cake_via_post_route(self):
+        archived_cake = Cake.objects.create(
+            name='Restore Cake',
+            category='birthday',
+            description='Cake restore test.',
+            price=Decimal('850.00'),
+            stock=2,
+            is_active=False,
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_cake_delete', args=[archived_cake.id]),
+            {'next': f"{reverse('admin_cakes')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], f"{reverse('admin_cakes')}?archived=1")
+        archived_cake.refresh_from_db()
+        self.assertFalse(archived_cake.is_archived)
+        self.assertIsNone(archived_cake.archived_at)
+        self.assertTrue(archived_cake.is_active)
+
+    def test_admin_can_bulk_archive_cakes(self):
+        first_cake = Cake.objects.create(
+            name='Bulk Cake One',
+            category='birthday',
+            description='Bulk archive cake one.',
+            price=Decimal('910.00'),
+            stock=3,
+            is_active=True,
+        )
+        second_cake = Cake.objects.create(
+            name='Bulk Cake Two',
+            category='birthday',
+            description='Bulk archive cake two.',
+            price=Decimal('920.00'),
+            stock=4,
+            is_active=True,
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_cakes_bulk_action'),
+            {
+                'action': 'archive',
+                'selected_ids': [first_cake.id, second_cake.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_cake.refresh_from_db()
+        second_cake.refresh_from_db()
+        self.assertTrue(first_cake.is_archived)
+        self.assertTrue(second_cake.is_archived)
+
+    def test_admin_archived_packages_page_renders_restore_action(self):
+        archived_package = Package.objects.create(
+            name='Archived Package',
+            package_type='christening',
+            description='Archived package for restore test.',
+            base_price=Decimal('3500.00'),
+            status='inactive',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(f"{reverse('admin_packages')}?archived=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Restore')
+        self.assertContains(response, reverse(
+            'admin_package_delete', args=[archived_package.id]))
+
+    def test_admin_archived_packages_view_links_preserve_archived_return_route(self):
+        archived_package = Package.objects.create(
+            name='Archived Package Link',
+            package_type='christening',
+            description='Archived package link test.',
+            base_price=Decimal('3600.00'),
+            status='inactive',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_packages_url = f"{reverse('admin_packages')}?archived=1"
+        expected_edit_url = (
+            f"{reverse('admin_package_edit', args=[archived_package.id])}"
+            f"?next={quote(archived_packages_url, safe='/')}"
+        )
+
+        response = self.client.get(archived_packages_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, expected_edit_url)
+
+    def test_admin_package_edit_preserves_archived_back_link(self):
+        archived_package = Package.objects.create(
+            name='Archived Package Back',
+            package_type='christening',
+            description='Archived package back-link test.',
+            base_price=Decimal('3650.00'),
+            status='inactive',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_packages_url = f"{reverse('admin_packages')}?archived=1"
+        response = self.client.get(
+            reverse('admin_package_edit', args=[archived_package.id]),
+            {'next': archived_packages_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['back_url'], archived_packages_url)
+        self.assertEqual(
+            response.context['back_label'], 'Back to Archived Package Products')
+        self.assertContains(response, f'href="{archived_packages_url}"')
+
+    def test_admin_can_restore_package_via_post_route(self):
+        archived_package = Package.objects.create(
+            name='Restore Package',
+            package_type='christening',
+            description='Package restore test.',
+            base_price=Decimal('3500.00'),
+            status='inactive',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_package_delete', args=[archived_package.id]),
+            {'next': f"{reverse('admin_packages')}?archived=1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], f"{reverse('admin_packages')}?archived=1")
+        archived_package.refresh_from_db()
+        self.assertFalse(archived_package.is_archived)
+        self.assertIsNone(archived_package.archived_at)
+        self.assertEqual(archived_package.status, 'active')
+
+    def test_admin_package_orders_page_renders_delete_action_option(self):
+        PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            order_status='confirmed',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_package_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Archive Order')
+        self.assertContains(response, 'Out for Delivery')
+
+    def test_admin_package_orders_page_renders_preview_summary_action(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_package_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Preview Summary')
+        self.assertContains(response, reverse(
+            'admin_package_order_view', args=[order.id]))
+
+    def test_admin_cake_order_preview_preserves_archived_orders_back_link(self):
+        order = CakeOrder.objects.create(
+            user=self.viewer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('999.00'),
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_orders_url = f"{reverse('admin_cake_orders')}?archived=1"
+        response = self.client.get(
+            reverse('admin_cake_order_view', args=[order.id]),
+            {'next': archived_orders_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['back_url'], archived_orders_url)
+        self.assertEqual(
+            response.context['back_label'], 'Back to Archived Cake Orders')
+        self.assertContains(response, 'Back to Archived Cake Orders')
+
+    def test_admin_package_order_preview_from_archived_payments_uses_archived_payments_back_link(self):
+        order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        Payment.objects.create(
+            amount=Decimal('5000.00'),
+            payment_method='gcash',
+            payment_status='paid',
+            package_order=order,
+            reference_number='ARCHIVE-PAY-001',
+            paid_at=timezone.now(),
+            is_archived=True,
+            archived_at=timezone.now(),
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        archived_payments_url = f"{reverse('admin_payments')}?archived=1"
+        response = self.client.get(
+            reverse('admin_package_order_view', args=[order.id]),
+            {'next': archived_payments_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['back_url'], archived_payments_url)
+        self.assertEqual(
+            response.context['back_label'], 'Back to Archived Payments')
+        self.assertContains(response, 'Back to Archived Payments')
+
+    def test_admin_package_orders_page_shows_latest_payment_status_and_recent_payment_activity_first(self):
+        older_order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('5000.00'),
+            order_status='pending',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        newer_order = PackageOrder.objects.create(
+            user=self.viewer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='pending',
+            event_type='christening',
+            event_date=date(2026, 6, 2),
+            event_time=time(11, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Viewer User',
+            contact_phone='09123456789',
+            contact_email='viewer@example.com',
+        )
+        stale_time = timezone.now() - timedelta(days=1)
+        PackageOrder.objects.filter(id=older_order.id).update(
+            created_at=stale_time,
+            updated_at=stale_time,
+        )
+        Payment.objects.create(
+            amount=Decimal('5000.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='verifying',
+            package_order=older_order,
+            reference_number='PACKAGE-ADMIN-001',
+        )
+        self.client.login(username='admin-user', password='TestPass123!')
+
+        response = self.client.get(reverse('admin_package_orders'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Under Verification')
+        self.assertContains(response, 'Deposit via GCash')
+        self.assertEqual(response.context['orders'][0].id, older_order.id)
+        self.assertIn(reverse('admin_package_order_view', args=[
+                      older_order.id]), response.content.decode())
+
+
+class OrderStatusNotificationTests(TestCase):
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            username='notified-user',
+            password='TestPass123!',
+            email='customer@example.com',
+            first_name='Notified',
+            last_name='User',
+        )
+        UserProfile.objects.create(user=self.customer, role='customer')
+
+        self.admin_user = User.objects.create_user(
+            username='status-admin',
+            password='TestPass123!',
+            email='status-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+
+        self.cake = Cake.objects.create(
+            name='Status Cake',
+            category='birthday',
+            description='Cake for notification tests.',
+            price=Decimal('1200.00'),
+            stock=3,
+            is_active=True,
+        )
+        self.package = Package.objects.create(
+            name='Status Package',
+            package_type='christening',
+            description='Package for notification tests.',
+            base_price=Decimal('6500.00'),
+            status='active',
+        )
+
+        self.client.login(username='status-admin', password='TestPass123!')
+
+    def test_admin_cake_order_update_creates_customer_notification_for_key_status(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_cake_order_update', args=[order.id]), {
+            'status': 'preparing',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, 'preparing')
+        notification = Notification.objects.get(cake_order=order)
+        self.assertEqual(notification.user, self.customer)
+        self.assertEqual(notification.notification_type, 'order_status')
+        self.assertIn(f'Code: {self.cake.product_code}', notification.message)
+        self.assertIn('Current status: Preparing.', notification.message)
+
+    def test_admin_cake_order_update_accepts_ready_for_pickup_status(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='preparing',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_cake_order_update', args=[order.id]), {
+            'status': 'ready_for_pickup',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, 'ready_for_pickup')
+        notification = Notification.objects.get(cake_order=order)
+        self.assertIn('Current status: Ready for Pickup.',
+                      notification.message)
+
+    def test_admin_can_bulk_update_cake_order_status(self):
+        first_order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Bulk User One',
+            contact_phone='09170000001',
+            contact_email='bulk-one@example.com',
+        )
+        second_order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Bulk User Two',
+            contact_phone='09170000002',
+            contact_email='bulk-two@example.com',
+        )
+
+        response = self.client.post(
+            reverse('admin_cake_orders_bulk_action'),
+            {
+                'action': 'preparing',
+                'selected_ids': [first_order.id, second_order.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_order.refresh_from_db()
+        second_order.refresh_from_db()
+        self.assertEqual(first_order.order_status, 'preparing')
+        self.assertEqual(second_order.order_status, 'preparing')
+
+    def test_admin_cake_order_update_sends_customer_email(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_cake_order_update', args=[order.id]), {
+            'status': 'ready_for_pickup',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, 'Cake Order #1 updated')
+        self.assertIn(f'Code: {self.cake.product_code}', mail.outbox[0].body)
+        self.assertIn('Current status: Ready for Pickup.', mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].to, ['customer@example.com'])
+
+    def test_admin_package_order_update_creates_customer_notification_for_key_status(self):
+        order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='confirmed',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_package_order_update', args=[order.id]), {
+            'status': 'preparing',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, 'preparing')
+        self.assertTrue(Notification.objects.filter(
+            package_order=order).exists())
+
+    def test_admin_package_order_update_accepts_out_for_delivery_status(self):
+        order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='ready_for_pickup',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_package_order_update', args=[order.id]), {
+            'status': 'out_for_delivery',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, 'out_for_delivery')
+        notification = Notification.objects.get(package_order=order)
+        self.assertIn('Current status: Out for Delivery.',
+                      notification.message)
+
+    def test_no_notification_is_created_when_status_does_not_change(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='pending',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_cake_order_update', args=[order.id]), {
+            'status': 'pending',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Notification.objects.filter(
+            cake_order=order).exists())
+
+    def test_payment_approval_creates_customer_notification(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1200.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='REF-001',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'paid')
+        notification = Notification.objects.get(payment=payment)
+        self.assertEqual(notification.notification_type, 'payment_status')
+        self.assertIn(f'Code: {self.cake.product_code}', notification.message)
+        self.assertIn('payment status is now Paid', notification.message)
+
+    def test_payment_approval_sends_customer_email(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1200.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='REF-003',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject,
+                         f'Payment #{payment.id} updated')
+        self.assertIn(f'Code: {self.cake.product_code}', mail.outbox[0].body)
+        self.assertIn('payment status is now Paid', mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].to, ['customer@example.com'])
+
+    def test_payment_approval_deducts_cake_stock_when_order_is_confirmed(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=2,
+            total_price=Decimal('2400.00'),
+            order_status='pending',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1200.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='REF-STOCK-001',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.cake.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'paid')
+        self.assertEqual(order.order_status, 'confirmed')
+        self.assertTrue(order.stock_deducted)
+        self.assertEqual(self.cake.stock, 1)
+
+    def test_payment_approval_deducts_package_stock_once(self):
+        self.package.stock = 2
+        self.package.save(update_fields=['stock'])
+        order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='pending',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('6500.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            package_order=order,
+            reference_number='REF-STOCK-002',
+        )
+
+        self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+        self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        order.refresh_from_db()
+        self.package.refresh_from_db()
+        self.assertTrue(order.stock_deducted)
+        self.assertEqual(self.package.stock, 1)
+
+    def test_payment_rejection_restores_previously_deducted_stock(self):
+        self.package.stock = 2
+        self.package.save(update_fields=['stock'])
+        order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='confirmed',
+            stock_deducted=True,
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('6500.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            package_order=order,
+            reference_number='REF-STOCK-003',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'reject',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.package.refresh_from_db()
+        self.assertEqual(order.order_status, 'payment_retry')
+        self.assertFalse(order.stock_deducted)
+        self.assertEqual(self.package.stock, 3)
+
+    def test_active_status_progression_keeps_deducted_stock_reserved(self):
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='confirmed',
+            stock_deducted=True,
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+
+        response = self.client.post(reverse('admin_cake_order_update', args=[order.id]), {
+            'status': 'preparing',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.cake.refresh_from_db()
+        self.assertEqual(order.order_status, 'preparing')
+        self.assertTrue(order.stock_deducted)
+        self.assertEqual(self.cake.stock, 3)
+
+    def test_payment_approval_is_blocked_when_stock_is_not_available(self):
+        self.cake.stock = 1
+        self.cake.save(update_fields=['stock'])
+        order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=2,
+            total_price=Decimal('2400.00'),
+            order_status='pending',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('1200.00'),
+            payment_method='gcash',
+            payment_purpose='deposit',
+            payment_status='verifying',
+            cake_order=order,
+            reference_number='REF-STOCK-004',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'approve',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        order.refresh_from_db()
+        self.cake.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'verifying')
+        self.assertEqual(order.order_status, 'pending')
+        self.assertFalse(order.stock_deducted)
+        self.assertEqual(self.cake.stock, 1)
+
+    def test_payment_rejection_creates_customer_notification(self):
+        order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('6500.00'),
+            order_status='confirmed',
+            event_type='christening',
+            event_date=date(2026, 6, 1),
+            event_time=time(10, 30),
+            venue='Oroquieta City Hall',
+            contact_name='Notified User',
+            contact_phone='09170000000',
+            contact_email='customer@example.com',
+        )
+        payment = Payment.objects.create(
+            amount=Decimal('6500.00'),
+            payment_method='gcash',
+            payment_status='verifying',
+            package_order=order,
+            reference_number='REF-002',
+        )
+
+        response = self.client.post(reverse('admin_payment_verify', args=[payment.id]), {
+            'action': 'reject',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        payment.refresh_from_db()
+        self.assertEqual(payment.payment_status, 'rejected')
+        order.refresh_from_db()
+        self.assertEqual(order.order_status, 'payment_retry')
+        notification = Notification.objects.get(payment=payment)
+        self.assertEqual(notification.notification_type, 'payment_status')
+        self.assertIn(f'Code: {self.package.product_code}',
+                      notification.message)
+        self.assertIn('payment status is now Rejected', notification.message)
+
+
+class InAppNotificationViewTests(TestCase):
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            username='profile-user',
+            password='TestPass123!',
+            email='profile-user@example.com',
+            first_name='Profile',
+            last_name='User',
+        )
+        UserProfile.objects.create(user=self.customer, role='customer')
+        self.cake = Cake.objects.create(
+            name='Tracked Cake',
+            category='birthday',
+            description='Cake for tracking tests.',
+            price=Decimal('900.00'),
+            stock=2,
+            is_active=True,
+        )
+        self.cake_order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('900.00'),
+            order_status='confirmed',
+            contact_name='Profile User',
+            contact_phone='09170000000',
+            contact_email='profile-user@example.com',
+        )
+        self.notification = Notification.objects.create(
+            user=self.customer,
+            notification_type='order_status',
+            title='Cake Order #1 updated',
+            message='Your cake order has been confirmed.',
+            status_value='confirmed',
+            cake_order=self.cake_order,
+            is_read=False,
+        )
+        self.client.login(username='profile-user', password='TestPass123!')
+
+    def test_profile_page_lists_recent_notifications(self):
+        response = self.client.get(reverse('profile'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Notifications')
+        self.assertContains(
+            response, f'{reverse("profile")}?section=notifications')
+
+    def test_profile_notifications_section_renders_on_right_panel_route(self):
+        response = self.client.get(
+            f'{reverse("profile")}?section=notifications')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['active_profile_section'], 'notifications')
+        self.assertContains(response, self.notification.title)
+        self.assertNotContains(response, 'Edit Profile Information')
+
+    def test_profile_post_saves_structured_delivery_address(self):
+        response = self.client.post(reverse('profile'), {
+            'first_name': 'Profile',
+            'last_name': 'User',
+            'email': 'profile-user@example.com',
+            'phone': '09170000000',
+            'address_line_1': '45 Bonifacio Street',
+            'address_barangay': 'Poblacion 2',
+            'address_city': 'Oroquieta City',
+            'address_landmark': 'Near the cathedral',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f'{reverse("profile")}?section=profile&tab=personal',
+        )
+        self.customer.profile.refresh_from_db()
+        self.assertEqual(
+            self.customer.profile.address,
+            '45 Bonifacio Street, Brgy. Poblacion 2, Oroquieta City, Misamis Occidental (Landmark: Near the cathedral)',
+        )
+
+    def test_update_preferences_redirects_back_to_preferences_tab(self):
+        response = self.client.post(reverse('update_preferences'), {
+            'account_notifications': 'on',
+            'promo_emails': 'on',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'],
+            f'{reverse("profile")}?section=profile&tab=preferences',
+        )
+
+    def test_order_tracking_marks_selected_order_notifications_read(self):
+        response = self.client.get(
+            f'{reverse("order_tracking")}?type=cake&id={self.cake_order.id}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.notification.message)
+        self.notification.refresh_from_db()
+        self.assertTrue(self.notification.is_read)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class AdminHomeHeroImageTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='hero-admin',
+            password='TestPass123!',
+            email='hero-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='hero-admin', password='TestPass123!')
+
+    def test_admin_home_hero_add_saves_uploaded_image(self):
+        response = self.client.post(reverse('admin_home_hero_add'), {
+            'title': 'Birthday Dessert Table',
+            'display_order': '1',
+            'is_active': 'on',
+            'image': build_test_image_upload('hero-collage.jpg'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        hero_image = HomeHeroImage.objects.get(title='Birthday Dessert Table')
+        self.assertTrue(bool(hero_image.image))
+        self.assertIn('hero/', hero_image.image.name)
+        self.assertEqual(hero_image.display_order, 1)
+        self.assertTrue(hero_image.is_active)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class AdminHomeStripImageTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='strip-admin',
+            password='TestPass123!',
+            email='strip-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='strip-admin', password='TestPass123!')
+
+    def test_admin_home_strip_add_saves_uploaded_image(self):
+        response = self.client.post(reverse('admin_home_strip_add'), {
+            'title': 'Milestone Celebrations in Full Color',
+            'display_order': '1',
+            'is_active': 'on',
+            'image': build_test_image_upload('home-strip.jpg'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        strip_image = HomeStripImage.objects.get(
+            title='Milestone Celebrations in Full Color')
+        self.assertTrue(bool(strip_image.image))
+        self.assertIn('home-strip/', strip_image.image.name)
+        self.assertEqual(strip_image.display_order, 1)
+        self.assertTrue(strip_image.is_active)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class AdminPackageImageUploadTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='package-admin',
+            password='TestPass123!',
+            email='package-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='package-admin', password='TestPass123!')
+
+    def test_admin_package_add_saves_uploaded_image(self):
+        uploaded_image = SimpleUploadedFile(
+            'package.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+        thumbnail_one = SimpleUploadedFile(
+            'thumb1.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+        thumbnail_two = SimpleUploadedFile(
+            'thumb2.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+
+        response = self.client.post(reverse('admin_package_add'), {
+            'name': 'Image Package',
+            'package_type': 'christening',
+            'description': 'Package with uploaded image.',
+            'base_price': '4500.00',
+            'status': 'active',
+            'features': 'Backdrop\nCupcakes',
+            'image': uploaded_image,
+            'thumbnail_1': thumbnail_one,
+            'thumbnail_2': thumbnail_two,
+        })
+
+        self.assertEqual(response.status_code, 302)
+        package = Package.objects.get(name='Image Package')
+        self.assertEqual(package.product_code, f'PKG-{package.id:04d}')
+        self.assertTrue(bool(package.image))
+        self.assertIn('packages/', package.image.name)
+        self.assertEqual(package.thumbnails.count(), 2)
+        self.assertEqual(
+            list(package.thumbnails.order_by(
+                'sort_order').values_list('sort_order', flat=True)),
+            [1, 2],
+        )
+
+    def test_admin_package_edit_replaces_image_when_new_file_uploaded(self):
+        original_image = SimpleUploadedFile(
+            'original.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+        package = Package.objects.create(
+            name='Editable Package',
+            package_type='christening',
+            description='Package before edit.',
+            base_price=Decimal('5500.00'),
+            status='active',
+            features='Stage lights',
+            image=original_image,
+        )
+        original_thumbnail = PackageThumbnail.objects.create(
+            package=package,
+            sort_order=1,
+            image=SimpleUploadedFile(
+                'original-thumb.jpg',
+                (
+                    b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                    b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                    b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                    b'\x00\x3b'
+                ),
+                content_type='image/gif',
+            ),
+        )
+        original_name = package.image.name
+        original_thumbnail_name = original_thumbnail.image.name
+
+        replacement_image = SimpleUploadedFile(
+            'replacement.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+        replacement_thumbnail = SimpleUploadedFile(
+            'replacement-thumb.jpg',
+            (
+                b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                b'\x00\x3b'
+            ),
+            content_type='image/gif',
+        )
+
+        response = self.client.post(reverse('admin_package_edit', args=[package.id]), {
+            'name': 'Editable Package',
+            'package_type': 'christening',
+            'description': 'Package after edit.',
+            'base_price': '5500.00',
+            'status': 'active',
+            'features': 'Stage lights\nBalloons',
+            'image': replacement_image,
+            'thumbnail_1': replacement_thumbnail,
+        })
+
+        self.assertEqual(response.status_code, 302)
+        package.refresh_from_db()
+        self.assertTrue(bool(package.image))
+        self.assertNotEqual(package.image.name, original_name)
+        updated_thumbnail = package.thumbnails.get(sort_order=1)
+        self.assertNotEqual(updated_thumbnail.image.name,
+                            original_thumbnail_name)
+
+    def test_admin_package_list_shows_generated_product_code(self):
+        package = Package.objects.create(
+            name='Visible Code Package',
+            package_type='christening',
+            description='Product code list rendering.',
+            base_price=Decimal('3200.00'),
+            status='active',
+            features='Backdrop',
+        )
+
+        response = self.client.get(reverse('admin_packages'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, package.product_code)
+
+
+class AdminProductCodeTests(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='product-code-admin',
+            password='TestPass123!',
+            email='product-code-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='product-code-admin',
+                          password='TestPass123!')
+
+    def test_admin_cake_list_shows_generated_product_code(self):
+        cake = Cake.objects.create(
+            name='Visible Code Cake',
+            category='birthday',
+            description='Product code list rendering.',
+            price=Decimal('1100.00'),
+            stock=4,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse('admin_cakes'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, cake.product_code)
+
+    def test_admin_cake_list_uses_placeholder_when_product_code_missing(self):
+        cake = Cake.objects.create(
+            name='Legacy Code Cake',
+            category='birthday',
+            description='Legacy record without product code.',
+            price=Decimal('980.00'),
+            stock=3,
+            is_active=True,
+        )
+        Cake.objects.filter(pk=cake.pk).update(product_code=None)
+
+        response = self.client.get(reverse('admin_cakes'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, '<strong>Not assigned</strong>', html=True)
+        self.assertNotContains(response, '<strong>None</strong>', html=True)
+
+    def test_admin_package_edit_uses_placeholder_when_product_code_missing(self):
+        package = Package.objects.create(
+            name='Legacy Package',
+            package_type='christening',
+            description='Legacy record without product code.',
+            base_price=Decimal('5000.00'),
+            status='active',
+            features='Lights',
+        )
+        Package.objects.filter(pk=package.pk).update(product_code=None)
+
+        response = self.client.get(
+            reverse('admin_package_edit', args=[package.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="Auto-generated after saving"')
+        self.assertNotContains(response, 'value="None"')
+
+    def test_admin_package_edit_can_remove_thumbnail_slot(self):
+        package = Package.objects.create(
+            name='Package With Thumbnail',
+            package_type='christening',
+            description='Package before thumbnail removal.',
+            base_price=Decimal('5500.00'),
+            status='active',
+            features='Stage lights',
+        )
+        PackageThumbnail.objects.create(
+            package=package,
+            sort_order=1,
+            image=SimpleUploadedFile(
+                'remove-thumb.jpg',
+                (
+                    b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                    b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                    b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                    b'\x00\x3b'
+                ),
+                content_type='image/gif',
+            ),
+        )
+
+        response = self.client.post(reverse('admin_package_edit', args=[package.id]), {
+            'name': 'Package With Thumbnail',
+            'package_type': 'christening',
+            'description': 'Package after thumbnail removal.',
+            'base_price': '5500.00',
+            'status': 'active',
+            'features': 'Stage lights',
+            'remove_thumbnail_1': 'on',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(package.thumbnails.exists())
+
+    def test_admin_package_add_saves_customization_options(self):
+        response = self.client.post(reverse('admin_package_add'), {
+            'name': 'Customizable Package',
+            'package_type': 'christening',
+            'description': 'Package with custom options.',
+            'base_price': '5000.00',
+            'status': 'active',
+            'features': 'Backdrop',
+            'customization_options_payload': json.dumps({
+                'addons': [
+                    {'label': 'Confetti Box', 'price': '125.00'},
+                ],
+                'cake_sizes': [
+                    {'label': 'Signature Upgrade', 'price': '250.00'},
+                ],
+            }),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        package = Package.objects.get(name='Customizable Package')
+        self.assertEqual(
+            package.customization_options['addons'][0]['label'], 'Confetti Box')
+        self.assertEqual(
+            package.customization_options['addons'][0]['price'], '125.00')
+        self.assertEqual(
+            package.customization_options['cake_sizes'][0]['label'], 'Signature Upgrade')
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class AdminCakeCustomizationOptionImageTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='cake-option-admin',
+            password='TestPass123!',
+            email='cake-option-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='cake-option-admin',
+                          password='TestPass123!')
+
+    def test_admin_cake_add_shows_option_image_column(self):
+        response = self.client.get(reverse('admin_cake_add'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Option Image')
+        self.assertContains(response, 'Cake Tier Options')
+        self.assertContains(response, 'Cake Size Options')
+        self.assertContains(response, '+ Add Tier Option')
+        self.assertContains(response, '+ Add Cake Size')
+        self.assertContains(response, 'Tier Option Name')
+        self.assertContains(response, 'Added Price (P)')
+        self.assertNotContains(response, 'Good for 8-20 people')
+
+    def test_admin_cake_add_preloads_default_tier_and_flavor_options(self):
+        response = self.client.get(reverse('admin_cake_add'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '1 Tier')
+        self.assertContains(response, '5 Tier')
+        self.assertContains(response, 'Chocolate')
+        self.assertContains(response, 'Buttercream')
+
+    def test_admin_cake_add_preloads_default_cake_size_inches(self):
+        response = self.client.get(reverse('admin_cake_add'))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+
+        self.assertEqual(
+            [item['label'] for item in option_groups['cake_sizes']],
+            ['6 Inches', '8 Inches', '10 Inches', '12 Inches'],
+        )
+
+    def test_admin_cake_edit_preloads_default_builder_options_for_plain_cake(self):
+        cake = Cake.objects.create(
+            name='Plain Catalog Cake',
+            category='birthday',
+            description='Cake without explicit customization options.',
+            price=Decimal('950.00'),
+            stock=4,
+            is_active=True,
+        )
+
+        response = self.client.get(reverse('admin_cake_edit', args=[cake.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '1 Tier')
+        self.assertContains(response, 'Round')
+        self.assertContains(response, 'Chocolate')
+        self.assertContains(response, 'Fresh Flowers')
+
+    def test_admin_cake_edit_keeps_cake_size_options_in_inches_for_tier_only_cakes(self):
+        cake = Cake.objects.create(
+            name='Tier Only Cake',
+            category='birthday',
+            description='Cake with only tier options configured.',
+            price=Decimal('1350.00'),
+            stock=3,
+            is_active=True,
+            customization_options={
+                'sizes': [
+                    {'label': '2 Tier', 'price': '250.00'},
+                ],
+            },
+        )
+
+        response = self.client.get(reverse('admin_cake_edit', args=[cake.id]))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+
+        self.assertEqual(
+            [item['label'] for item in option_groups['cake_sizes']],
+            ['6 Inches', '8 Inches', '10 Inches', '12 Inches'],
+        )
+        self.assertEqual(
+            [item['label'] for item in option_groups['sizes']],
+            ['1 Tier', '2 Tier', '3 Tier', '4 Tier', '5 Tier'],
+        )
+
+    def test_admin_cake_edit_removes_legacy_tier_rows_from_cake_size_options(self):
+        cake = Cake.objects.create(
+            name='Legacy Size Cake',
+            category='birthday',
+            description='Cake with legacy tier rows saved in cake size options.',
+            price=Decimal('1450.00'),
+            stock=3,
+            is_active=True,
+            customization_options={
+                'sizes': [
+                    {'label': '1 Tier', 'price': '0.00'},
+                    {'label': '2 Tier', 'price': '250.00'},
+                ],
+                'cake_sizes': [
+                    {'label': '1 Tier', 'price': '0.00'},
+                    {'label': '8 Inches', 'price': '125.00'},
+                    {'label': '10 Inches', 'price': '225.00'},
+                ],
+            },
+        )
+
+        response = self.client.get(reverse('admin_cake_edit', args=[cake.id]))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+
+        self.assertEqual(
+            [item['label'] for item in option_groups['cake_sizes']],
+            ['6 Inches', '8 Inches', '10 Inches', '12 Inches'],
+        )
+        self.assertEqual(
+            [item['price'] for item in option_groups['cake_sizes']],
+            ['10.00', '125.00', '225.00', '50.00'],
+        )
+
+    def test_admin_cake_add_saves_size_price_adjustments(self):
+        response = self.client.post(reverse('admin_cake_add'), {
+            'name': 'Tiered Option Cake',
+            'category': 'birthday',
+            'description': 'Cake with saved tier pricing.',
+            'price': '1800.00',
+            'stock': '4',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'sizes': [
+                    {'label': '4 Tier', 'price': '1800.00'},
+                ],
+            }),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake = Cake.objects.get(name='Tiered Option Cake')
+        self.assertEqual(
+            cake.customization_options['sizes'][0]['label'], '4 Tier')
+        self.assertEqual(
+            cake.customization_options['sizes'][0]['price'], '1800.00')
+
+    def test_admin_cake_add_saves_cake_size_options_and_syncs_tier_options(self):
+        response = self.client.post(reverse('admin_cake_add'), {
+            'name': 'Cake Size Option Cake',
+            'category': 'birthday',
+            'description': 'Cake with separate cake size option card.',
+            'price': '1950.00',
+            'stock': '3',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'cake_sizes': [
+                    {'label': 'Celebration Tier', 'price': '275.00'},
+                ],
+            }),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake = Cake.objects.get(name='Cake Size Option Cake')
+        self.assertEqual(
+            cake.customization_options['cake_sizes'][0]['label'], 'Celebration Tier')
+        self.assertEqual(
+            cake.customization_options['cake_sizes'][0]['price'], '275.00')
+        self.assertEqual(
+            cake.customization_options['sizes'][0]['label'], 'Celebration Tier')
+        self.assertEqual(
+            cake.customization_options['sizes'][0]['price'], '275.00')
+
+    def test_admin_cake_add_saves_customization_option_image(self):
+        response = self.client.post(reverse('admin_cake_add'), {
+            'name': 'Option Image Cake',
+            'category': 'birthday',
+            'description': 'Cake with flavor image options.',
+            'price': '1250.00',
+            'stock': '3',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'flavors': [
+                    {'label': 'Strawberry', 'price': '50.00'},
+                ],
+            }),
+            'option_image__flavors__0': build_test_image_upload('strawberry-option.jpg'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        cake = Cake.objects.get(name='Option Image Cake')
+        self.assertEqual(
+            cake.customization_options['flavors'][0]['label'],
+            'Strawberry',
+        )
+        self.assertIn('image', cake.customization_options['flavors'][0])
+        self.assertIn(
+            'cake-options/',
+            cake.customization_options['flavors'][0]['image'],
+        )
+
+    def test_admin_cake_edit_replaces_customization_option_image(self):
+        add_response = self.client.post(reverse('admin_cake_add'), {
+            'name': 'Editable Option Image Cake',
+            'category': 'birthday',
+            'description': 'Cake before option image replacement.',
+            'price': '1400.00',
+            'stock': '2',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'flavors': [
+                    {'label': 'Chocolate', 'price': '25.00'},
+                ],
+            }),
+            'option_image__flavors__0': build_test_image_upload('chocolate-option.jpg'),
+        })
+
+        self.assertEqual(add_response.status_code, 302)
+        cake = Cake.objects.get(name='Editable Option Image Cake')
+        original_image_path = cake.customization_options['flavors'][0]['image']
+
+        edit_response = self.client.post(reverse('admin_cake_edit', args=[cake.id]), {
+            'name': 'Editable Option Image Cake',
+            'category': 'birthday',
+            'description': 'Cake after option image replacement.',
+            'price': '1400.00',
+            'stock': '2',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'flavors': [
+                    {
+                        'label': 'Chocolate',
+                        'price': '25.00',
+                        'image': original_image_path,
+                    },
+                ],
+            }),
+            'option_image__flavors__0': build_test_image_upload('chocolate-option-new.jpg'),
+        })
+
+        self.assertEqual(edit_response.status_code, 302)
+        cake.refresh_from_db()
+        updated_image_path = cake.customization_options['flavors'][0]['image']
+        self.assertNotEqual(updated_image_path, original_image_path)
+        self.assertFalse(
+            (Path(TEST_MEDIA_ROOT) / original_image_path).exists())
+
+    def test_admin_cake_edit_deduplicates_saved_decoration_rows_on_render_and_update(self):
+        cake = Cake.objects.create(
+            name='Duplicated Decoration Cake',
+            category='birthday',
+            description='Cake with duplicated decoration rows from an older builder save.',
+            price=Decimal('1550.00'),
+            stock=2,
+            is_active=True,
+            customization_options={
+                'decorations': [
+                    {'label': 'Fresh Flowers', 'price': '300.00',
+                        'key': 'fresh-flowers'},
+                    {
+                        'label': 'Fresh Flowers',
+                        'price': '125.00',
+                        'key': 'fresh-flowers-2',
+                        'image': 'cake-options/25/decorations/fresh-flowers.jpg',
+                    },
+                ],
+            },
+        )
+
+        response = self.client.get(reverse('admin_cake_edit', args=[cake.id]))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+        fresh_flower_rows = [
+            item for item in option_groups['decorations']
+            if item['label'] == 'Fresh Flowers'
+        ]
+
+        self.assertEqual(len(fresh_flower_rows), 1)
+        self.assertEqual(fresh_flower_rows[0]['price'], '125.00')
+        self.assertEqual(fresh_flower_rows[0]['key'], 'fresh-flowers')
+
+        edit_response = self.client.post(reverse('admin_cake_edit', args=[cake.id]), {
+            'name': cake.name,
+            'category': cake.category,
+            'description': cake.description,
+            'price': '1550.00',
+            'stock': '2',
+            'is_active': 'on',
+            'customization_options_payload': json.dumps({
+                'decorations': [
+                    {
+                        'label': 'Fresh Flowers',
+                        'price': '125.00',
+                        'key': 'fresh-flowers',
+                        'image': 'cake-options/25/decorations/fresh-flowers.jpg',
+                    },
+                ],
+            }),
+        })
+
+        self.assertEqual(edit_response.status_code, 302)
+        cake.refresh_from_db()
+        self.assertEqual(len(cake.customization_options['decorations']), 1)
+        self.assertEqual(
+            cake.customization_options['decorations'][0]['key'],
+            'fresh-flowers',
+        )
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class AdminPackageCustomizationOptionImageTests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='package-option-admin',
+            password='TestPass123!',
+            email='package-option-admin@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.client.login(username='package-option-admin',
+                          password='TestPass123!')
+
+    def test_admin_package_add_shows_option_image_column(self):
+        response = self.client.get(reverse('admin_package_add'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Option Image')
+        self.assertContains(response, 'Cake Size Upgrades')
+        self.assertContains(response, '+ Add Cake Size')
+        self.assertContains(response, 'Added Price (P)')
+        self.assertNotContains(response, 'Good for 20-40 people')
+
+    def test_admin_package_add_saves_customization_option_image(self):
+        response = self.client.post(reverse('admin_package_add'), {
+            'name': 'Option Image Package',
+            'package_type': 'christening',
+            'description': 'Package with add-on image options.',
+            'base_price': '4500.00',
+            'status': 'active',
+            'features': 'Backdrop',
+            'customization_options_payload': json.dumps({
+                'addons': [
+                    {'label': 'Confetti Cannon', 'price': '150.00'},
+                ],
+            }),
+            'option_image__addons__0': build_test_image_upload('confetti-cannon-option.jpg'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        package = Package.objects.get(name='Option Image Package')
+        self.assertEqual(
+            package.customization_options['addons'][0]['label'],
+            'Confetti Cannon',
+        )
+        self.assertIn('image', package.customization_options['addons'][0])
+        self.assertIn(
+            'package-options/',
+            package.customization_options['addons'][0]['image'],
+        )
+
+    def test_admin_package_add_saves_structured_inclusions_with_image(self):
+        response = self.client.post(reverse('admin_package_add'), {
+            'name': 'Structured Inclusion Package',
+            'package_type': 'christening',
+            'description': 'Package with structured inclusions.',
+            'base_price': '4800.00',
+            'status': 'active',
+            'package_inclusions_payload': json.dumps([
+                {
+                    'label': 'Mini Cupcakes',
+                    'quantity': 24,
+                    'price': '18.50',
+                },
+            ]),
+            'option_image__addons__0': build_test_image_upload('unused-addon-image.jpg'),
+            'package_inclusion_image__0': build_test_image_upload('mini-cupcakes.jpg'),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        package = Package.objects.get(name='Structured Inclusion Package')
+        self.assertEqual(package.features, '24 x Mini Cupcakes')
+        self.assertEqual(package.included_items, '24 x Mini Cupcakes')
+        self.assertEqual(
+            package.customization_options['included_items'][0]['label'],
+            'Mini Cupcakes',
+        )
+        self.assertEqual(
+            package.customization_options['included_items'][0]['quantity'],
+            24,
+        )
+        self.assertEqual(
+            package.customization_options['included_items'][0]['price'],
+            '18.50',
+        )
+        self.assertIn(
+            'package-inclusions/',
+            package.customization_options['included_items'][0]['image'],
+        )
+
+    def test_admin_package_edit_replaces_customization_option_image(self):
+        add_response = self.client.post(reverse('admin_package_add'), {
+            'name': 'Editable Option Image Package',
+            'package_type': 'christening',
+            'description': 'Package before option image replacement.',
+            'base_price': '5200.00',
+            'status': 'active',
+            'features': 'Backdrop',
+            'customization_options_payload': json.dumps({
+                'addons': [
+                    {'label': 'Sparkler Set', 'price': '90.00'},
+                ],
+            }),
+            'option_image__addons__0': build_test_image_upload('sparkler-option.jpg'),
+        })
+
+        self.assertEqual(add_response.status_code, 302)
+        package = Package.objects.get(name='Editable Option Image Package')
+        original_image_path = package.customization_options['addons'][0]['image']
+
+        edit_response = self.client.post(reverse('admin_package_edit', args=[package.id]), {
+            'name': 'Editable Option Image Package',
+            'package_type': 'christening',
+            'description': 'Package after option image replacement.',
+            'base_price': '5200.00',
+            'status': 'active',
+            'features': 'Backdrop',
+            'customization_options_payload': json.dumps({
+                'addons': [
+                    {
+                        'label': 'Sparkler Set',
+                        'price': '90.00',
+                        'image': original_image_path,
+                    },
+                ],
+            }),
+            'option_image__addons__0': build_test_image_upload('sparkler-option-new.jpg'),
+        })
+
+        self.assertEqual(edit_response.status_code, 302)
+        package.refresh_from_db()
+        updated_image_path = package.customization_options['addons'][0]['image']
+        self.assertNotEqual(updated_image_path, original_image_path)
+        self.assertFalse(
+            (Path(TEST_MEDIA_ROOT) / original_image_path).exists())
+
+    def test_admin_package_edit_deduplicates_saved_decoration_rows_on_render_and_update(self):
+        package = Package.objects.create(
+            name='Duplicated Decoration Package',
+            package_type='christening',
+            description='Package with duplicated decoration rows from an older builder save.',
+            base_price=Decimal('5200.00'),
+            status='active',
+            features='Backdrop',
+            customization_options={
+                'cake_decorations': [
+                    {'label': 'Custom Cake Topper',
+                        'price': '250.00', 'key': 'custom_topper'},
+                    {
+                        'label': 'Custom Cake Topper',
+                        'price': '325.00',
+                        'key': 'custom-cake-topper',
+                        'image': 'package-options/25/cake_decorations/custom-cake-topper.jpg',
+                    },
+                ],
+            },
+        )
+
+        response = self.client.get(
+            reverse('admin_package_edit', args=[package.id]))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+        custom_topper_rows = [
+            item for item in option_groups['cake_decorations']
+            if item['label'] == 'Custom Cake Topper'
+        ]
+
+        self.assertEqual(len(custom_topper_rows), 1)
+        self.assertEqual(custom_topper_rows[0]['price'], '325.00')
+        self.assertEqual(custom_topper_rows[0]['key'], 'custom_topper')
+
+        edit_response = self.client.post(reverse('admin_package_edit', args=[package.id]), {
+            'name': package.name,
+            'package_type': package.package_type,
+            'description': package.description,
+            'base_price': '5200.00',
+            'status': package.status,
+            'package_inclusions_payload': json.dumps([
+                {
+                    'label': 'Backdrop',
+                    'quantity': 1,
+                    'price': '0.00',
+                },
+            ]),
+            'customization_options_payload': json.dumps({
+                'cake_decorations': [
+                    {
+                        'label': 'Custom Cake Topper',
+                        'price': '325.00',
+                        'key': 'custom_topper',
+                        'image': 'package-options/25/cake_decorations/custom-cake-topper.jpg',
+                    },
+                ],
+            }),
+        })
+
+        self.assertEqual(edit_response.status_code, 302)
+        package.refresh_from_db()
+        self.assertEqual(
+            len(package.customization_options['cake_decorations']), 1)
+        self.assertEqual(
+            package.customization_options['cake_decorations'][0]['key'],
+            'custom_topper',
+        )
+
+    def test_admin_package_edit_hides_removed_edible_image_print_decoration(self):
+        package = Package.objects.create(
+            name='Legacy Edible Image Package',
+            package_type='christening',
+            description='Package with removed edible image print decoration still saved.',
+            base_price=Decimal('5200.00'),
+            status='active',
+            features='Backdrop',
+            customization_options={
+                'cake_decorations': [
+                    {
+                        'label': 'Edible Image Print',
+                        'price': '200.00',
+                        'key': 'edible_image',
+                        'image': 'package-options/25/cake_decorations/edible-image-print.jpg',
+                    },
+                ],
+            },
+        )
+
+        response = self.client.get(
+            reverse('admin_package_edit', args=[package.id]))
+
+        self.assertEqual(response.status_code, 200)
+        option_groups = {
+            group['key']: group['items']
+            for group in response.context['option_editor_groups']
+        }
+        self.assertFalse(
+            any(
+                item['label'] == 'Edible Image Print'
+                for item in option_groups['cake_decorations']
+            )
+        )
+        self.assertNotContains(response, 'Edible Image Print')
+
+
+class PackageThumbnailCatalogTests(TestCase):
+    def test_packages_page_renders_zoom_gallery_data_for_package(self):
+        package = Package.objects.create(
+            name='Gallery Package',
+            package_type='christening',
+            description='Package with thumbnail gallery.',
+            base_price=Decimal('5500.00'),
+            status='active',
+            features='Backdrop',
+            image=SimpleUploadedFile(
+                'main.jpg',
+                (
+                    b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                    b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                    b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                    b'\x00\x3b'
+                ),
+                content_type='image/gif',
+            ),
+        )
+        for slot_order in range(1, 5):
+            PackageThumbnail.objects.create(
+                package=package,
+                sort_order=slot_order,
+                image=SimpleUploadedFile(
+                    f'thumb-{slot_order}.jpg',
+                    (
+                        b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00'
+                        b'\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00'
+                        b'\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01'
+                        b'\x00\x3b'
+                    ),
+                    content_type='image/gif',
+                ),
+            )
+
+        response = self.client.get(reverse('packages'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-zoom-images=')
+        self.assertNotContains(response, 'data-thumbnail-src=')
+        self.assertContains(response, '5 images available in zoom')
+        self.assertContains(response, package.image.url)
+        for thumbnail in package.thumbnails.order_by('sort_order'):
+            self.assertContains(response, thumbnail.image.url)
+
+
+class HomeRecommendationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='recommend-user',
+            password='TestPass123!',
+            first_name='Recommend',
+            last_name='User',
+            email='recommend@example.com',
+        )
+        UserProfile.objects.create(user=self.user, role='customer')
+
+        self.birthday_cake = Cake.objects.create(
+            name='Birthday Chocolate Cake',
+            category='birthday',
+            description='Chocolate birthday cake for parties.',
+            price=Decimal('950.00'),
+            stock=5,
+            is_active=True,
+        )
+        self.wedding_cake = Cake.objects.create(
+            name='Elegant Wedding Cake',
+            category='wedding',
+            description='Tiered wedding cake with floral styling.',
+            price=Decimal('4200.00'),
+            stock=2,
+            is_active=True,
+        )
+
+        self.christening_package = Package.objects.create(
+            name='Christening Package A',
+            package_type='christening',
+            description='Christening setup with cake and balloons.',
+            base_price=Decimal('7000.00'),
+            status='active',
+        )
+        self.kids_package = Package.objects.create(
+            name='Kids Birthday Package',
+            package_type='kids_birthday',
+            description='Birthday package with themed treats.',
+            base_price=Decimal('6500.00'),
+            status='active',
+        )
+
+        CakeOrder.objects.create(
+            user=self.user,
+            cake=self.birthday_cake,
+            quantity=1,
+            total_price=Decimal('950.00'),
+            theme='Birthday',
+            flavor='Chocolate',
+            frosting='Buttercream',
+            delivery_address='Oroquieta City',
+            contact_name='Recommend User',
+            contact_phone='09123456789',
+            contact_email='recommend@example.com',
+        )
+        PackageOrder.objects.create(
+            user=self.user,
+            package=self.christening_package,
+            total_price=Decimal('7000.00'),
+            event_type='christening',
+            event_date=date(2026, 5, 30),
+            event_time=time(13, 0),
+            venue='Oroquieta City',
+            contact_name='Recommend User',
+            contact_phone='09123456789',
+            contact_email='recommend@example.com',
+            cake_flavor='Chocolate',
+            cake_frosting='Buttercream',
+        )
+
+    def test_homepage_personalizes_recommendations_for_signed_in_user(self):
+        self.client.login(username='recommend-user', password='TestPass123!')
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['recommendation_headline'], 'Recommended For Your Next Celebration')
+        self.assertEqual(
+            response.context['recommended_cakes'][0]['id'], self.birthday_cake.id)
+        self.assertEqual(
+            response.context['recommended_packages'][0]['id'], self.christening_package.id)
+
+    def test_homepage_falls_back_to_best_sellers_for_guest_users(self):
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['recommendation_headline'], 'Best-Selling Picks')
+        self.assertGreaterEqual(len(response.context['recommended_cakes']), 1)
+        self.assertGreaterEqual(
+            len(response.context['recommended_packages']), 1)
+        self.assertContains(
+            response, 'data-zoom-gallery="home-recommended-cakes"')
+        self.assertContains(
+            response, 'data-zoom-gallery="home-recommended-packages"')
+
+    def test_homepage_prefers_uploaded_hero_collage_images(self):
+        HomeHeroImage.objects.create(
+            title='Joyful Birthday Gathering',
+            image='hero/joyful-birthday.jpg',
+            display_order=0,
+            is_active=True,
+        )
+        HomeHeroImage.objects.create(
+            title='Elegant Wedding Table',
+            image='hero/elegant-wedding.jpg',
+            display_order=1,
+            is_active=True,
+        )
+        HomeHeroImage.objects.create(
+            title='Garden Dessert Display',
+            image='hero/garden-dessert.jpg',
+            display_order=2,
+            is_active=True,
+        )
+        HomeHeroImage.objects.create(
+            title='Golden Anniversary Setup',
+            image='hero/golden-anniversary.jpg',
+            display_order=3,
+            is_active=True,
+        )
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['hero_collage_images']), 4)
+        self.assertEqual(
+            response.context['hero_collage_images'][0]['title'],
+            'Joyful Birthday Gathering',
+        )
+        self.assertContains(response, 'data-zoom-gallery="home-hero-collage"')
+        self.assertContains(
+            response, 'data-zoom-title="Golden Anniversary Setup"')
+
+    def test_homepage_renders_uploaded_strip_image(self):
+        HomeStripImage.objects.create(
+            title='Celebration Styling for Every Milestone',
+            image='home-strip/celebration-strip.jpg',
+            display_order=0,
+            is_active=True,
+        )
+
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['home_strip_image']['title'],
+            'Celebration Styling for Every Milestone',
+        )
+        self.assertContains(response, 'data-zoom-gallery="home-strip-image"')
+        self.assertContains(
+            response, 'Celebration Styling for Every Milestone')
+
+
+class TestimonialWorkflowTests(TestCase):
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            username='testimonial-customer',
+            password='TestPass123!',
+            first_name='Taylor',
+            last_name='Customer',
+            email='testimonial@example.com',
+        )
+        UserProfile.objects.create(user=self.customer, role='customer')
+
+        self.admin_user = User.objects.create_user(
+            username='testimonial-admin',
+            password='AdminPass123!',
+            email='admin-testimonial@example.com',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.admin_user.is_staff = True
+        self.admin_user.save(update_fields=['is_staff'])
+
+        self.cake = Cake.objects.create(
+            name='Celebration Cake',
+            category='birthday',
+            description='Soft sponge cake for milestone events.',
+            price=Decimal('1200.00'),
+            stock=3,
+            is_active=True,
+        )
+        self.package = Package.objects.create(
+            name='Celebration Package',
+            package_type='christening',
+            description='Complete event package.',
+            base_price=Decimal('8500.00'),
+            status='active',
+        )
+
+        self.completed_cake_order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='completed',
+            theme='Anniversary',
+            flavor='Chocolate',
+            frosting='Buttercream',
+            delivery_address='Oroquieta City',
+            contact_name='Taylor Customer',
+            contact_phone='09123456789',
+            contact_email='testimonial@example.com',
+        )
+        self.pending_cake_order = CakeOrder.objects.create(
+            user=self.customer,
+            cake=self.cake,
+            quantity=1,
+            total_price=Decimal('1200.00'),
+            order_status='pending',
+            theme='Birthday',
+            flavor='Chocolate',
+            frosting='Buttercream',
+            delivery_address='Oroquieta City',
+            contact_name='Taylor Customer',
+            contact_phone='09123456789',
+            contact_email='testimonial@example.com',
+        )
+        self.completed_package_order = PackageOrder.objects.create(
+            user=self.customer,
+            package=self.package,
+            total_price=Decimal('8500.00'),
+            order_status='completed',
+            event_type='christening',
+            event_date=date(2026, 6, 15),
+            event_time=time(14, 0),
+            venue='Oroquieta City',
+            contact_name='Taylor Customer',
+            contact_phone='09123456789',
+            contact_email='testimonial@example.com',
+            cake_flavor='Chocolate',
+            cake_frosting='Buttercream',
+        )
+
+    def test_customer_can_submit_testimonial_for_completed_cake_order(self):
+        self.client.login(username='testimonial-customer',
+                          password='TestPass123!')
+
+        response = self.client.post(
+            reverse('submit_testimonial',
+                    args=['cake', self.completed_cake_order.id]),
+            {
+                'rating': '5',
+                'message': 'The cake looked beautiful and tasted amazing.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        testimonial = Testimonial.objects.get(
+            cake_order=self.completed_cake_order)
+        self.assertEqual(testimonial.status, Testimonial.STATUS_PENDING)
+        self.assertEqual(testimonial.rating, 5)
+        self.assertTrue(
+            ActivityLog.objects.filter(
+                actor=self.customer,
+                action='testimonial_submitted',
+                target_type='testimonial',
+                target_id=testimonial.id,
+            ).exists()
+        )
+
+    def test_customer_can_submit_testimonial_for_completed_package_order(self):
+        self.client.login(username='testimonial-customer',
+                          password='TestPass123!')
+
+        response = self.client.post(
+            reverse('submit_testimonial',
+                    args=['package', self.completed_package_order.id]),
+            {
+                'rating': '4',
+                'message': 'The package setup arrived on time and felt organized.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        testimonial = Testimonial.objects.get(
+            package_order=self.completed_package_order)
+        self.assertEqual(testimonial.status, Testimonial.STATUS_PENDING)
+        self.assertEqual(testimonial.rating, 4)
+
+    def test_customer_cannot_submit_testimonial_for_incomplete_order(self):
+        self.client.login(username='testimonial-customer',
+                          password='TestPass123!')
+
+        response = self.client.post(
+            reverse('submit_testimonial', args=[
+                    'cake', self.pending_cake_order.id]),
+            {
+                'rating': '5',
+                'message': 'Trying to submit too early.',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Testimonial.objects.filter(cake_order=self.pending_cake_order).exists())
+        self.assertContains(
+            response, 'Testimonials can only be submitted after the order is completed.')
+
+    def test_homepage_shows_only_approved_testimonials(self):
+        approved_testimonial = Testimonial.objects.create(
+            user=self.customer,
+            cake_order=self.completed_cake_order,
+            customer_name='Taylor Customer',
+            rating=5,
+            message='Approved testimonial for the homepage.',
+            status=Testimonial.STATUS_APPROVED,
+            reviewed_by=self.admin_user,
+            reviewed_at=timezone.now(),
+        )
+        Testimonial.objects.create(
+            user=self.customer,
+            package_order=self.completed_package_order,
+            customer_name='Taylor Customer',
+            rating=3,
+            message='Pending testimonial should stay hidden.',
+            status=Testimonial.STATUS_PENDING,
+        )
+
+        response = self.client.get(reverse('home'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(approved_testimonial,
+                      response.context['homepage_testimonials'])
+        self.assertContains(response, 'Approved testimonial for the homepage.')
+        self.assertNotContains(
+            response, 'Pending testimonial should stay hidden.')
+
+    def test_admin_can_approve_pending_testimonial(self):
+        testimonial = Testimonial.objects.create(
+            user=self.customer,
+            cake_order=self.completed_cake_order,
+            customer_name='Taylor Customer',
+            rating=5,
+            message='Please approve this testimonial.',
+            status=Testimonial.STATUS_PENDING,
+        )
+        self.client.login(username='testimonial-admin',
+                          password='AdminPass123!')
+
+        response = self.client.post(
+            reverse('admin_testimonial_update', args=[testimonial.id]),
+            {
+                'action': 'approve',
+                'admin_note': 'Verified completed order feedback.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        testimonial.refresh_from_db()
+        self.assertEqual(testimonial.status, Testimonial.STATUS_APPROVED)
+        self.assertEqual(testimonial.reviewed_by, self.admin_user)
+        self.assertEqual(testimonial.admin_note,
+                         'Verified completed order feedback.')
+
+    def test_admin_can_bulk_approve_testimonials(self):
+        first_testimonial = Testimonial.objects.create(
+            user=self.customer,
+            cake_order=self.completed_cake_order,
+            customer_name='Taylor Customer',
+            rating=5,
+            message='Approve the first testimonial.',
+            status=Testimonial.STATUS_PENDING,
+        )
+        second_testimonial = Testimonial.objects.create(
+            user=self.customer,
+            package_order=self.completed_package_order,
+            customer_name='Taylor Customer',
+            rating=4,
+            message='Approve the second testimonial.',
+            status=Testimonial.STATUS_PENDING,
+        )
+        self.client.login(username='testimonial-admin',
+                          password='AdminPass123!')
+
+        response = self.client.post(
+            reverse('admin_testimonials_bulk_action'),
+            {
+                'action': 'approve',
+                'selected_ids': [first_testimonial.id, second_testimonial.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_testimonial.refresh_from_db()
+        second_testimonial.refresh_from_db()
+        self.assertEqual(first_testimonial.status, Testimonial.STATUS_APPROVED)
+        self.assertEqual(second_testimonial.status,
+                         Testimonial.STATUS_APPROVED)
+        self.assertEqual(first_testimonial.reviewed_by, self.admin_user)
+        self.assertEqual(second_testimonial.reviewed_by, self.admin_user)
+
+    def test_rejected_testimonial_can_be_resubmitted(self):
+        testimonial = Testimonial.objects.create(
+            user=self.customer,
+            cake_order=self.completed_cake_order,
+            customer_name='Taylor Customer',
+            rating=2,
+            message='Initial version',
+            status=Testimonial.STATUS_REJECTED,
+            admin_note='Please revise the message.',
+            reviewed_by=self.admin_user,
+            reviewed_at=timezone.now(),
+        )
+        self.client.login(username='testimonial-customer',
+                          password='TestPass123!')
+
+        response = self.client.post(
+            reverse('submit_testimonial',
+                    args=['cake', self.completed_cake_order.id]),
+            {
+                'rating': '5',
+                'message': 'Updated version after revision.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        testimonial.refresh_from_db()
+        self.assertEqual(testimonial.status, Testimonial.STATUS_PENDING)
+        self.assertEqual(testimonial.message,
+                         'Updated version after revision.')
+        self.assertEqual(testimonial.rating, 5)
+        self.assertEqual(testimonial.admin_note, '')
+        self.assertIsNone(testimonial.reviewed_by)
+        self.assertIsNone(testimonial.reviewed_at)
+
+    def test_non_admin_cannot_open_admin_testimonials_page(self):
+        self.client.login(username='testimonial-customer',
+                          password='TestPass123!')
+
+        response = self.client.get(reverse('admin_testimonials'))
+
+        self.assertEqual(response.status_code, 302)
+
+
+class ContactInquiryAdminReplyTests(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='contact-admin',
+            email='contact-admin@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=self.admin_user, role='admin')
+        self.admin_user.is_staff = True
+        self.admin_user.save(update_fields=['is_staff'])
+
+    def test_admin_reply_sends_email_and_marks_inquiry_replied(self):
+        inquiry = ContactInquiry.objects.create(
+            name='Jamie Customer',
+            contact_detail='jamie@example.com',
+            message='Hello, I want to know if you can customize a birthday cake for next week.',
+        )
+        self.client.login(username='contact-admin', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_contact_inquiry_reply', args=[inquiry.id]),
+            {
+                'reply_message': 'Yes, we can help with that. Please share your preferred theme and pickup date.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        inquiry.refresh_from_db()
+        self.assertTrue(inquiry.is_read)
+        self.assertEqual(inquiry.status_label, 'Replied')
+        self.assertEqual(
+            inquiry.admin_reply,
+            'Yes, we can help with that. Please share your preferred theme and pickup date.',
+        )
+        self.assertEqual(inquiry.replied_by, self.admin_user)
+        self.assertIsNotNone(inquiry.replied_at)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['jamie@example.com'])
+        self.assertIn('Yes, we can help with that.', mail.outbox[0].body)
+
+        detail_response = self.client.get(
+            reverse('admin_contact_inquiry_view', args=[inquiry.id]))
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertIsNone(
+            detail_response.context['reply_form']['reply_message'].value())
+        self.assertContains(detail_response, 'name="reply_message"')
+        self.assertTrue(
+            ActivityLog.objects.filter(
+                action='contact_inquiry_replied',
+                target_type='contact_inquiry',
+                target_id=inquiry.id,
+            ).exists()
+        )
+
+    def test_admin_reply_saves_manual_note_when_inquiry_has_no_email(self):
+        inquiry = ContactInquiry.objects.create(
+            name='Phone Customer',
+            contact_detail='09171234567',
+            message='Please call me back about the package inclusions.',
+        )
+        self.client.login(username='contact-admin', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_contact_inquiry_reply', args=[inquiry.id]),
+            {
+                'reply_message': 'We noted your request and will follow up using the phone number you provided.',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        inquiry.refresh_from_db()
+        self.assertEqual(inquiry.status_label, 'Replied')
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(
+            inquiry.admin_reply,
+            'We noted your request and will follow up using the phone number you provided.',
+        )
+
+    def test_admin_can_mark_read_inquiry_back_to_new(self):
+        inquiry = ContactInquiry.objects.create(
+            name='Status Customer',
+            contact_detail='status@example.com',
+            message='Checking if the inquiry status can be changed back to new.',
+            is_read=True,
+            read_at=timezone.now(),
+        )
+        self.client.login(username='contact-admin', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_contact_inquiry_update', args=[inquiry.id]),
+            {'action': 'mark_unread'},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        inquiry.refresh_from_db()
+        self.assertFalse(inquiry.is_read)
+        self.assertIsNone(inquiry.read_at)
+        self.assertEqual(inquiry.status_label, 'New')
+
+    def test_admin_contact_inquiry_detail_preserves_archived_back_link(self):
+        inquiry = ContactInquiry.objects.create(
+            name='Archived Inquiry Customer',
+            contact_detail='archived@example.com',
+            message='Archived inquiry back-link test.',
+            is_archived=True,
+        )
+        self.client.login(username='contact-admin', password='TestPass123!')
+
+        archived_inquiries_url = f"{reverse('admin_contact_inquiries')}?archived=1"
+        response = self.client.get(
+            reverse('admin_contact_inquiry_view', args=[inquiry.id]),
+            {'next': archived_inquiries_url},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context['return_url'], archived_inquiries_url)
+        self.assertEqual(
+            response.context['back_label'], 'Back to Archived Inquiries')
+        self.assertContains(response, 'Back to Archived Inquiries')
+        self.assertContains(response, f'href="{archived_inquiries_url}"')
+
+    def test_admin_can_bulk_archive_contact_inquiries(self):
+        first_inquiry = ContactInquiry.objects.create(
+            name='Bulk Inquiry One',
+            contact_detail='bulk-one@example.com',
+            message='Archive the first inquiry.',
+        )
+        second_inquiry = ContactInquiry.objects.create(
+            name='Bulk Inquiry Two',
+            contact_detail='bulk-two@example.com',
+            message='Archive the second inquiry.',
+        )
+        self.client.login(username='contact-admin', password='TestPass123!')
+
+        response = self.client.post(
+            reverse('admin_contact_inquiries_bulk_action'),
+            {
+                'action': 'archive',
+                'selected_ids': [first_inquiry.id, second_inquiry.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        first_inquiry.refresh_from_db()
+        second_inquiry.refresh_from_db()
+        self.assertTrue(first_inquiry.is_archived)
+        self.assertTrue(second_inquiry.is_archived)
+
+
+class AuthenticationFlowTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def _build_user_with_role(self, role, index=1):
+        user = User.objects.create_user(
+            username=f'{role}-user-{index}',
+            email=f'{role}-{index}@example.com',
+            password='TestPass123!',
+            first_name=role.title(),
+            last_name='Reset',
+        )
+        UserProfile.objects.create(user=user, role=role)
+        if role != 'customer':
+            user.is_staff = True
+            user.save(update_fields=['is_staff'])
+        return user
+
+    def _extract_reset_path(self, body):
+        for line in body.splitlines():
+            candidate = line.strip()
+            if candidate.startswith('http://testserver'):
+                return urlsplit(candidate).path
+        self.fail('Password reset email did not include a reset link.')
+
+    def test_public_register_creates_customer_profile(self):
+        response = self.client.post(reverse('register'), {
+            'username': 'registered-customer',
+            'email': 'registered@example.com',
+            'password': 'TestPass123!',
+            'confirm_password': 'TestPass123!',
+            'firstname': 'Registered',
+            'lastname': 'Customer',
+            'phone': '09171234567',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('profile'))
+        registered_user = User.objects.get(username='registered-customer')
+        self.assertEqual(registered_user.profile.role, 'customer')
+        self.assertFalse(registered_user.is_staff)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject,
+                         'Welcome to Hanilies Cakeshoppe')
+        self.assertEqual(mail.outbox[0].to, ['registered@example.com'])
+        self.assertIn('http://testserver' +
+                      reverse('login'), mail.outbox[0].body)
+        self.assertIn('http://testserver' +
+                      reverse('profile'), mail.outbox[0].body)
+        self.assertIn('http://testserver' +
+                      reverse('contact'), mail.outbox[0].body)
+
+    def test_public_register_rejects_common_passwords(self):
+        response = self.client.post(reverse('register'), {
+            'username': 'weak-customer',
+            'email': 'weak@example.com',
+            'password': 'password',
+            'confirm_password': 'password',
+            'firstname': 'Weak',
+            'lastname': 'Customer',
+            'phone': '09171234567',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This password is too common.')
+        self.assertFalse(User.objects.filter(
+            username='weak-customer').exists())
+
+    def test_authenticated_customer_is_redirected_away_from_login_page(self):
+        user = User.objects.create_user(
+            username='existing-customer',
+            email='existing@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='customer')
+        self.client.login(username='existing-customer',
+                          password='TestPass123!')
+
+        response = self.client.get(reverse('login'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('profile'))
+
+    def test_authenticated_staff_is_redirected_away_from_login_page(self):
+        user = User.objects.create_user(
+            username='existing-admin',
+            email='admin@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='admin')
+        user.is_staff = True
+        user.save(update_fields=['is_staff'])
+        self.client.login(username='existing-admin', password='TestPass123!')
+
+        response = self.client.get(reverse('login'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers['Location'], reverse('admin_dashboard'))
+
+    def test_login_page_shows_forgot_password_link(self):
+        response = self.client.get(reverse('login'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse('password_reset'))
+        self.assertContains(response, 'Forgot Password?')
+
+    def test_login_view_creates_audit_log_entry(self):
+        user = User.objects.create_user(
+            username='audit-login-user',
+            email='audit-login@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='customer')
+
+        response = self.client.post(reverse('login'), {
+            'username': 'audit-login-user',
+            'password': 'TestPass123!',
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('profile'))
+        self.assertTrue(
+            ActivityLog.objects.filter(
+                actor=user,
+                action='User login',
+                target_type='user',
+                target_id=user.id,
+                description='User "audit-login-user" logged in.',
+            ).exists()
+        )
+
+    @override_settings(LOGIN_FAILURE_LIMIT=3, LOGIN_LOCKOUT_SECONDS=60)
+    def test_login_view_locks_out_after_repeated_failed_attempts(self):
+        user = User.objects.create_user(
+            username='locked-login-user',
+            email='locked-login@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='customer')
+
+        for _ in range(3):
+            response = self.client.post(reverse('login'), {
+                'username': 'locked-login-user',
+                'password': 'WrongPass123!',
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Too many failed login attempts.')
+
+        blocked_response = self.client.post(reverse('login'), {
+            'username': 'locked-login-user',
+            'password': 'TestPass123!',
+        })
+
+        self.assertEqual(blocked_response.status_code, 200)
+        self.assertContains(
+            blocked_response,
+            'Too many failed login attempts.',
+        )
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_logout_view_creates_audit_log_entry(self):
+        user = User.objects.create_user(
+            username='audit-logout-user',
+            email='audit-logout@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='customer')
+        self.client.login(username='audit-logout-user',
+                          password='TestPass123!')
+
+        response = self.client.get(reverse('logout'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], reverse('home'))
+        self.assertTrue(
+            ActivityLog.objects.filter(
+                actor=user,
+                action='User logout',
+                target_type='user',
+                target_id=user.id,
+                description='User "audit-logout-user" logged out.',
+            ).exists()
+        )
+
+    def test_change_password_rejects_common_passwords(self):
+        user = User.objects.create_user(
+            username='change-password-user',
+            email='change-password@example.com',
+            password='TestPass123!',
+        )
+        UserProfile.objects.create(user=user, role='customer')
+        self.client.login(username='change-password-user',
+                          password='TestPass123!')
+
+        response = self.client.post(reverse('change_password'), {
+            'current_password': 'TestPass123!',
+            'new_password': 'password',
+            'confirm_password': 'password',
+        }, follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This password is too common.')
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('TestPass123!'))
+
+    def test_password_reset_request_supports_all_roles(self):
+        roles = [role for role, _ in UserProfile.ROLE_CHOICES]
+
+        for index, role in enumerate(roles, start=1):
+            user = self._build_user_with_role(role, index=index)
+
+            response = self.client.post(
+                reverse('password_reset'),
+                {'email': user.email},
+                follow=True,
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(
+                response,
+                'Password reset instructions have been sent if the email is registered.',
+            )
+
+        self.assertEqual(len(mail.outbox), len(roles))
+        self.assertEqual(
+            ActivityLog.objects.filter(
+                action='Password reset requested').count(),
+            len(roles),
+        )
+
+    def test_password_reset_request_uses_generic_message_for_unknown_email(self):
+        response = self.client.post(
+            reverse('password_reset'),
+            {'email': 'missing@example.com'},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'Password reset instructions have been sent if the email is registered.',
+        )
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(
+            ActivityLog.objects.filter(
+                action='Password reset requested').exists()
+        )
+
+    def test_password_reset_confirm_updates_password_and_logs_completion(self):
+        user = self._build_user_with_role('customer')
+        request_response = self.client.post(
+            reverse('password_reset'),
+            {'email': user.email},
+            follow=True,
+        )
+
+        self.assertContains(
+            request_response,
+            'Password reset instructions have been sent if the email is registered.',
+        )
+        self.assertEqual(len(mail.outbox), 1)
+
+        reset_path = self._extract_reset_path(mail.outbox[0].body)
+        confirm_response = self.client.get(reset_path, follow=True)
+
+        self.assertEqual(confirm_response.status_code, 200)
+        self.assertContains(confirm_response, 'Set a New Password')
+
+        completion_response = self.client.post(
+            confirm_response.request['PATH_INFO'],
+            {
+                'new_password1': 'NewSecurePass456!',
+                'new_password2': 'NewSecurePass456!',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(completion_response.status_code, 200)
+        self.assertEqual(
+            completion_response.request['PATH_INFO'],
+            reverse('login'),
+        )
+        self.assertContains(
+            completion_response,
+            'Password successfully reset. You may now log in.',
+        )
+
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('NewSecurePass456!'))
+        self.assertEqual(
+            ActivityLog.objects.filter(
+                action='Password reset completed', actor=user).count(),
+            1,
+        )
+
+    def test_password_reset_confirm_enforces_password_validation(self):
+        user = self._build_user_with_role('manager')
+        self.client.post(reverse('password_reset'), {
+                         'email': user.email}, follow=True)
+        reset_path = self._extract_reset_path(mail.outbox[0].body)
+        confirm_response = self.client.get(reset_path, follow=True)
+
+        response = self.client.post(
+            confirm_response.request['PATH_INFO'],
+            {
+                'new_password1': 'password123',
+                'new_password2': 'password123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This password is too common.')
+
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('TestPass123!'))
+        self.assertFalse(
+            ActivityLog.objects.filter(
+                action='Password reset completed', actor=user).exists()
+        )
+
+
+class MediaSyncCommandTests(TestCase):
+    def test_sync_repo_media_copies_repo_media_into_media_root(self):
+        source_base_dir = Path(tempfile.mkdtemp())
+        destination_media_root = Path(tempfile.mkdtemp())
+
+        self.addCleanup(shutil.rmtree, source_base_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, destination_media_root,
+                        ignore_errors=True)
+
+        source_file = source_base_dir / 'media' / 'cakes' / 'deploy-sample.txt'
+        source_file.parent.mkdir(parents=True, exist_ok=True)
+        source_file.write_text('repo media content', encoding='utf-8')
+
+        with override_settings(BASE_DIR=source_base_dir, MEDIA_ROOT=destination_media_root):
+            call_command('sync_repo_media')
+
+        synced_file = destination_media_root / 'cakes' / 'deploy-sample.txt'
+        self.assertTrue(synced_file.exists())
+        self.assertEqual(synced_file.read_text(
+            encoding='utf-8'), 'repo media content')
+
+
+class MediaServingTests(TestCase):
+    def test_media_file_is_served_from_media_url(self):
+        media_root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, media_root, ignore_errors=True)
+
+        media_file = media_root / 'packages' / 'visible.txt'
+        media_file.parent.mkdir(parents=True, exist_ok=True)
+        media_file.write_text('package image placeholder', encoding='utf-8')
+
+        with override_settings(MEDIA_ROOT=media_root):
+            response = self.client.get('/media/packages/visible.txt')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            b''.join(response.streaming_content),
+            b'package image placeholder',
+        )
+
+
+class CatalogSeedFixtureTests(TestCase):
+    def test_catalog_seed_fixture_loads_into_empty_database(self):
+        Cake.objects.all().delete()
+        Package.objects.all().delete()
+
+        call_command('loaddata', 'catalog_seed', verbosity=0)
+
+        self.assertEqual(Cake.objects.count(), 25)
+        self.assertEqual(Package.objects.count(), 12)
+        self.assertTrue(Cake.objects.filter(
+            name='Chocolate Fudge Cake').exists())
+        self.assertTrue(Cake.objects.filter(
+            name="Valentine's Day Cake", category='custom').exists())
+        self.assertTrue(Cake.objects.filter(
+            name='New Year Cake', category='custom').exists())
+        self.assertTrue(Package.objects.filter(
+            name='Wedding Package A').exists())
+
+    def test_catalog_seed_fixture_can_be_loaded_again_without_duplicate_rows(self):
+        call_command('loaddata', 'catalog_seed', verbosity=0)
+        call_command('loaddata', 'catalog_seed', verbosity=0)
+
+        self.assertEqual(Cake.objects.count(), 25)
+        self.assertEqual(Package.objects.count(), 12)
+
+    def test_special_occasions_route_lists_seeded_custom_cakes(self):
+        call_command('loaddata', 'catalog_seed', verbosity=0)
+
+        response = self.client.get(reverse('cakes'), {'category': 'custom'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['cakes'].count(), 9)
+        self.assertContains(response, 'Graduation Cake')
+        self.assertContains(response, 'Debut Cake')
+        self.assertContains(response, 'Gender Reveal Cake')
+        self.assertContains(response, 'Christmas Cake')
+        self.assertContains(response, 'New Year Cake')
+        seeded_cake = Cake.objects.get(name="Valentine's Day Cake")
+        self.assertContains(
+            response,
+            f"{reverse('cake_customize')}?cake_id={seeded_cake.id}",
+        )
+
+
+class PublicCatalogPaginationTests(TestCase):
+    def _create_cakes(self, total, category='birthday', name_prefix='Cake', stock=5):
+        return [
+            Cake.objects.create(
+                name=f'{name_prefix} {index:02d}',
+                category=category,
+                description=f'{name_prefix} description {index:02d}',
+                price=Decimal('1200.00') + Decimal(index),
+                stock=stock,
+                is_active=True,
+            )
+            for index in range(1, total + 1)
+        ]
+
+    def _create_packages(self, total, package_type='birthday', name_prefix='Package'):
+        return [
+            Package.objects.create(
+                name=f'{name_prefix} {index:02d}',
+                package_type=package_type,
+                description=f'{name_prefix} description {index:02d}',
+                base_price=Decimal('5000.00') + Decimal(index),
+                status='active',
+            )
+            for index in range(1, total + 1)
+        ]
+
+    def test_cakes_catalog_pagination_handles_single_page_results(self):
+        self._create_cakes(7, name_prefix='Solo Cake')
+
+        response = self.client.get(reverse('cakes'), {'q': 'Solo'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['cakes_page'].paginator.count, 7)
+        self.assertContains(response, 'Showing 1-7 of 7 cakes')
+        self.assertContains(
+            response, 'aria-label="Go to previous page"', count=0, html=False)
+        self.assertContains(
+            response, 'aria-disabled="true">Previous', html=False)
+        self.assertContains(response, 'aria-disabled="true">Next', html=False)
+        self.assertContains(response, 'aria-current="page">1', html=False)
+
+    def test_cakes_catalog_pagination_handles_exact_page_size(self):
+        self._create_cakes(9, name_prefix='Exact Cake')
+
+        response = self.client.get(reverse('cakes'), {'q': 'Exact'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['cakes'].count(), 9)
+        self.assertContains(response, 'Showing 1-9 of 9 cakes')
+        self.assertContains(response, 'Cake 09')
+        self.assertNotContains(response, '?page=2#cakes-collection')
+
+    def test_cakes_catalog_pagination_preserves_filters_and_final_page_state(self):
+        self._create_cakes(11, category='birthday', name_prefix='Pink Cake')
+        self._create_cakes(3, category='christening', name_prefix='Blue Cake')
+
+        first_response = self.client.get(reverse('cakes'), {
+            'category': 'birthday',
+            'q': 'Pink',
+        })
+        second_response = self.client.get(reverse('cakes'), {
+            'category': 'birthday',
+            'q': 'Pink',
+            'page': 2,
+        })
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertContains(first_response, 'Showing 1-9 of 11 cakes')
+        self.assertContains(first_response, 'Pink Cake 09')
+        self.assertNotContains(first_response, 'Pink Cake 10')
+        self.assertContains(
+            first_response, '?category=birthday&amp;q=Pink&amp;page=2#cakes-collection', html=False)
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.context['cakes_page'].number, 2)
+        self.assertContains(second_response, 'Showing 10-11 of 11 cakes')
+        self.assertContains(second_response, 'Pink Cake 10')
+        self.assertContains(second_response, 'Pink Cake 11')
+        self.assertNotContains(second_response, 'Pink Cake 09')
+        self.assertContains(
+            second_response, '?category=birthday&amp;q=Pink#cakes-collection', html=False)
+
+    def test_cakes_catalog_empty_state_uses_filtered_result_count(self):
+        self._create_cakes(2, category='birthday', name_prefix='Vanilla Cake')
+
+        response = self.client.get(reverse('cakes'), {
+            'category': 'christening',
+            'q': 'Strawberry',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No cakes matched your filters.')
+        self.assertContains(response, 'Showing 0-0 of 0 cakes')
+        self.assertEqual(response.context['cakes_page'].paginator.count, 0)
+
+    def test_packages_catalog_pagination_preserves_filters_and_refreshable_urls(self):
+        self._create_packages(10, package_type='adults_party',
+                              name_prefix='Birthday Package')
+        self._create_packages(2, package_type='christening',
+                              name_prefix='Christening Package')
+
+        page_two_url = f"{reverse('packages')}?type=adults_party&q=Birthday&page=2"
+        response = self.client.get(page_two_url)
+        refresh_response = self.client.get(page_two_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(refresh_response.status_code, 200)
+        self.assertEqual(response.context['packages_page'].number, 2)
+        self.assertEqual(refresh_response.context['packages_page'].number, 2)
+        self.assertContains(response, 'Showing 10-10 of 10 packages')
+        self.assertContains(response, 'Birthday Package 10')
+        self.assertNotContains(response, 'Birthday Package 09')
+        self.assertContains(
+            response, '?type=adults_party&amp;q=Birthday#packages-collection', html=False)
+        self.assertContains(response, 'aria-label="Go to page 1"', html=False)
+        self.assertContains(response, 'aria-current="page">2', html=False)
+
+    def test_packages_catalog_excludes_non_public_rows_from_paginated_results(self):
+        self._create_packages(8, package_type='wedding',
+                              name_prefix='Visible Package')
+        Package.objects.create(
+            name='Archived Package',
+            package_type='wedding',
+            description='Should not display.',
+            base_price=Decimal('6000.00'),
+            status='active',
+            is_archived=True,
+        )
+        Package.objects.create(
+            name='Inactive Package',
+            package_type='wedding',
+            description='Should not display.',
+            base_price=Decimal('6000.00'),
+            status='inactive',
+        )
+        Package.objects.create(
+            name='Corporate Package',
+            package_type='corporate',
+            description='Should not display.',
+            base_price=Decimal('6000.00'),
+            status='active',
+        )
+
+        response = self.client.get(reverse('packages'), {
+            'type': 'wedding',
+            'q': 'Visible',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['packages_page'].paginator.count, 8)
+        self.assertContains(response, 'Showing 1-8 of 8 packages')
+        self.assertNotContains(response, 'Archived Package')
+        self.assertNotContains(response, 'Inactive Package')
+        self.assertNotContains(response, 'Corporate Package')
+
+
+class CatalogSeedCommandTests(TestCase):
+    def test_seed_catalog_if_empty_loads_fixture_and_assigns_product_codes(self):
+        Cake.objects.all().delete()
+        Package.objects.all().delete()
+
+        output = StringIO()
+        call_command('seed_catalog_if_empty', stdout=output, verbosity=0)
+
+        self.assertEqual(Cake.objects.count(), 25)
+        self.assertEqual(Package.objects.count(), 12)
+        self.assertEqual(Cake.objects.filter(
+            product_code__isnull=True).count(), 0)
+        self.assertEqual(Package.objects.filter(
+            product_code__isnull=True).count(), 0)
+        self.assertTrue(Cake.objects.filter(product_code='CK-0001').exists())
+        self.assertTrue(Package.objects.filter(
+            product_code='PKG-0001').exists())
+        self.assertIn('Catalog seed loaded.', output.getvalue())
+
+    def test_seed_catalog_if_empty_skips_existing_catalog_data(self):
+        initial_cake_count = Cake.objects.count()
+        initial_package_count = Package.objects.count()
+
+        existing_cake = Cake.objects.create(
+            name='Existing Catalog Cake',
+            category='birthday',
+            description='Keep existing catalog data untouched.',
+            price=Decimal('1200.00'),
+            stock=2,
+            is_active=True,
+        )
+
+        output = StringIO()
+        call_command('seed_catalog_if_empty', stdout=output, verbosity=0)
+
+        self.assertEqual(Cake.objects.count(), initial_cake_count + 1)
+        self.assertEqual(Package.objects.count(), initial_package_count)
+        existing_cake.refresh_from_db()
+        self.assertEqual(existing_cake.product_code,
+                         f'CK-{existing_cake.id:04d}')
+        self.assertIn(
+            'Catalog seed skipped because cake/package data already exists.', output.getvalue())
+
+    def test_seed_catalog_if_empty_backfills_missing_codes_for_existing_catalog(self):
+        existing_cake = Cake.objects.create(
+            name='Legacy Catalog Cake',
+            category='birthday',
+            description='Existing row missing product code.',
+            price=Decimal('1300.00'),
+            stock=3,
+            is_active=True,
+        )
+        existing_package = Package.objects.create(
+            name='Legacy Catalog Package',
+            package_type='wedding',
+            description='Existing row missing product code.',
+            base_price=Decimal('9000.00'),
+            features='Feature 1',
+            included_items='Item 1',
+            status='active',
+        )
+        Cake.objects.filter(pk=existing_cake.pk).update(product_code=None)
+        Package.objects.filter(
+            pk=existing_package.pk).update(product_code=None)
+
+        output = StringIO()
+        call_command('seed_catalog_if_empty', stdout=output, verbosity=0)
+
+        existing_cake.refresh_from_db()
+        existing_package.refresh_from_db()
+        self.assertEqual(existing_cake.product_code,
+                         f'CK-{existing_cake.id:04d}')
+        self.assertEqual(existing_package.product_code,
+                         f'PKG-{existing_package.id:04d}')
+        self.assertIn(
+            'Assigned product codes to 1 cakes and 1 packages.', output.getvalue())
+
+
+@override_settings(HANILIES_AI_API_KEY='')
+class HaniliesAIChatTests(TestCase):
+    def test_budget_chat_uses_current_public_catalog(self):
+        matching_cake = Cake.objects.create(
+            name='Simple Chocolate Cake',
+            category='birthday',
+            description='Chocolate celebration cake for small gatherings.',
+            price=Decimal('100.00'),
+            stock=4,
+            is_active=True,
+        )
+        Cake.objects.create(
+            name='Premium Wedding Cake',
+            category='wedding',
+            description='Tall wedding cake.',
+            price=Decimal('4500.00'),
+            stock=3,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse('hanilies_ai_chat'),
+            data=json.dumps(
+                {'message': 'I have a budget of 1000 what cake can I have?'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload['used_external_ai'])
+        self.assertIn('Simple Chocolate Cake', payload['reply'])
+        self.assertNotIn('Premium Wedding Cake', payload['reply'])
+        self.assertEqual(payload['suggestions']['cakes']
+                         [0]['name'], matching_cake.name)
+
+    def test_chat_does_not_directly_suggest_unavailable_products(self):
+        Cake.objects.create(
+            name='Archived Cake',
+            category='birthday',
+            price=Decimal('700.00'),
+            stock=4,
+            is_active=True,
+            is_archived=True,
+        )
+        Cake.objects.create(
+            name='Inactive Cake',
+            category='birthday',
+            price=Decimal('800.00'),
+            stock=4,
+            is_active=False,
+        )
+        Cake.objects.create(
+            name='Sold Out Cake',
+            category='birthday',
+            price=Decimal('900.00'),
+            stock=0,
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse('hanilies_ai_chat'),
+            data=json.dumps({'message': 'birthday cake under 1000'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['suggestions']['cakes'], [])
+        self.assertNotIn('Archived Cake', payload['reply'])
+        self.assertNotIn('Inactive Cake', payload['reply'])
+        self.assertNotIn('Sold Out Cake', payload['reply'])
+
+    def test_chat_uses_package_capacity_for_package_date_questions(self):
+        selected_date = timezone.now().date() + timedelta(days=5)
+
+        response = self.client.post(
+            reverse('hanilies_ai_chat'),
+            data=json.dumps(
+                {'message': f'Is there package availability on {selected_date.isoformat()}?'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['suggestions']['booking']
+                         ['capacity'], PACKAGE_DAILY_EVENT_LIMIT)
+        self.assertIn('package slots remain', payload['reply'])
+
+    def test_chat_rejects_messages_over_limit(self):
+        response = self.client.post(
+            reverse('hanilies_ai_chat'),
+            data=json.dumps({'message': 'x' * 801}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('under 800 characters', response.json()['error'])
+
+    def test_public_base_renders_hanilies_ai_widget(self):
+        response = self.client.get(reverse('home'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Hanilies AI')
+        self.assertContains(response, reverse('hanilies_ai_page'))
+        self.assertContains(response, reverse('hanilies_ai_chat'))
+
+    def test_hanilies_ai_page_renders_full_chat(self):
+        response = self.client.get(reverse('hanilies_ai_page'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Ask about cakes, packages, stock, budget, and available dates.')
+        self.assertContains(response, 'haniliesAiBackButton')
+        self.assertContains(response, 'haniliesAiPageForm')
+        self.assertContains(response, reverse('hanilies_ai_chat'))
